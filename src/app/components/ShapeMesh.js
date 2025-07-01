@@ -500,7 +500,7 @@ if (!points[0].equals(points[points.length - 1])) {
 if (THREE.ShapeUtils.isClockWise(points)) {
   points.reverse()
 }
-   console.log(points)
+   //console.log(points)
 // Tạo shape
 const shape = new THREE.Shape(points)
 
@@ -603,7 +603,7 @@ export default function ShapeMesh({ url,urlImg, resolution = 1 }) {
 const al = useRef()
 const originalTexture = new THREE.TextureLoader().load(url, (tex) => {
   al.current = extractAlphaDataTextureWithMipmaps(tex);
-console.log(al.current)
+//console.log(al.current)
 });
 
 
@@ -613,7 +613,7 @@ console.log(al.current)
 
   return (
     <>
-    <axesHelper args={[5]}/>
+  {/*   <axesHelper args={[5]}/> */}
  {/*     <Center> */}
        <mesh geometry={geometry} castShadow receiveShadow>
          <customMaterial   wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={al.current} uMap={textureImg}/>
@@ -622,7 +622,7 @@ console.log(al.current)
 
       <mesh position={[0, 2, 0]}>
         <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial map={ al.current} />
+        <meshBasicMaterial map={textureImg} />
       </mesh>
     </>
   )

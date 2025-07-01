@@ -47,15 +47,45 @@ export default function Home() {
         </div>
       )}
       <div className="w-full h-screen">
-     // Thay imageUrl bằng đường dẫn tới image của bạn
-<ShapeMesh 
-  url="/shape.jpg" 
-  resolution={2}    // Độ chi tiết
-  extrude={0.2}     // Độ dày 3D
-  color="#4f46e5" 
-/>
+        <Canvas camera={{ position: [0, 0, 3] }} shadows>
+          <color attach="background" args={['#1a1a1a']} />
+          <group position={[4,0,0]}>
+            <ShapeMesh url={'/shape2.png'} urlImg={'/shape.jpg'}/>
+          </group>
+          <group position={[0,0,0]}>
+            <ShapeMesh url={'/shape3.png'} urlImg={'/shape3o.jpg'}/>
+          </group>
+          <group position={[-4,0,0]}>
+            <ShapeMesh url={'/shape4.png'} urlImg={'/shape4o.jpg'}/>
+          </group>
+          <group position={[0,0,4]}>
+            <ShapeMesh url={'/shape5.png'} urlImg={'/shape5o.webp'}/>
+          </group>
+          <group position={[-4,0,4]}>
+            <ShapeMesh url={'/shape6.png'} urlImg={'/shape6o.webp'}/>
+          </group>
+          {/* Lighting */}
+          <ambientLight intensity={1} />
+          <directionalLight
+            position={[10, 10, 5]}
+            intensity={0.8}
+            castShadow
+            shadow-camera-far={50}
+            shadow-camera-left={-10}
+            shadow-camera-right={10}
+            shadow-camera-top={10}
+            shadow-camera-bottom={-10}
+          />
+          <OrbitControls enableDamping dampingFactor={0.05} />
+          {/* Ground plane */}
+         {/*  <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1, 0]} receiveShadow>
+            <planeGeometry args={[10, 10]} />
+            <meshStandardMaterial color="#333" />
+          </mesh> */}
+        </Canvas>
+
       </div>
-        
+
     </main>
   );
 }

@@ -11,6 +11,7 @@
   "dependencies": {
     "@react-three/drei": "^10.4.1",
     "@react-three/fiber": "^9.1.4",
+    "cdt2d": "^1.0.0",
     "leva": "^0.10.0",
     "next": "15.3.4",
     "react": "^19.0.0",

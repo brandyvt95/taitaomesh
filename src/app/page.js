@@ -5,6 +5,8 @@ import { useState } from 'react';
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import ShapeMesh from './components/ShapeMesh';
+import ShapeMesh_testalo from './components/ShapeMesh_testalo';
+import { useControls } from 'leva';
 
 export default function Home() {
   const [image, setImage] = useState(null);
@@ -29,7 +31,9 @@ export default function Home() {
       alert(error.error || 'Failed to process image');
     }
   };
-
+  const {toggle} = useControls('gen mesh - lapcian + CTD _ buffer',{
+    toggle:{value:false}
+  })
   return (
     <main className="p-8">
       <h1 className="text-2xl mb-4">Remove Background</h1>
@@ -49,10 +53,30 @@ export default function Home() {
       <div className="w-full h-screen">
         <Canvas camera={{ position: [0, 0, 3] }} shadows>
           <color attach="background" args={['#1a1a1a']} />
-          <group position={[4,0,0]}>
-            <ShapeMesh url={'/shape2.png'} urlImg={'/shape.jpg'}/>
+          {toggle ? (
+            <>
+             <group position={[0,0,0]}>
+            <ShapeMesh_testalo  url={'/shape2.png'} urlImg={'/shape.jpg'}/>
           </group>
-          <group position={[0,0,0]}>
+          <group position={[4,0,0]}>
+            <ShapeMesh_testalo url={'/shape3.png'} urlImg={'/shape3o.jpg'}/>
+          </group>
+          <group position={[-4,0,0]}>
+            <ShapeMesh_testalo url={'/shape4.png'} urlImg={'/shape4o.jpg'}/>
+          </group>
+          <group position={[0,0,4]}>
+            <ShapeMesh_testalo url={'/shape5.png'} urlImg={'/shape5o.webp'}/>
+          </group> 
+          <group position={[-4,0,4]}>
+            <ShapeMesh_testalo url={'/shape6.png'} urlImg={'/shape6o.webp'}/>
+          </group>
+            </>
+          ):(
+            <>
+             <group position={[0,0,0]}>
+            <ShapeMesh  url={'/shape2.png'} urlImg={'/shape.jpg'}/>
+          </group>
+          <group position={[4,0,0]}>
             <ShapeMesh url={'/shape3.png'} urlImg={'/shape3o.jpg'}/>
           </group>
           <group position={[-4,0,0]}>
@@ -60,10 +84,13 @@ export default function Home() {
           </group>
           <group position={[0,0,4]}>
             <ShapeMesh url={'/shape5.png'} urlImg={'/shape5o.webp'}/>
-          </group>
+          </group> 
           <group position={[-4,0,4]}>
             <ShapeMesh url={'/shape6.png'} urlImg={'/shape6o.webp'}/>
           </group>
+            </>
+          )}
+         
           {/* Lighting */}
           <ambientLight intensity={1} />
           <directionalLight

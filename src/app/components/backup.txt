@@ -7,9 +7,7 @@ import { Center, shaderMaterial, useTexture } from '@react-three/drei'
 import { useControls } from 'leva'
 import { LoopSubdivision } from 'three-subdivide'
 import { extractAlphaDataTextureWithMipmaps, extractAlphaToDataTexture, findContourPath_ConvexHull_sm } from './utils'
-import { generateNarrowBandSDFSmooth, generateSDFfromDataTexture } from './generateSDFfromDataTexture'
-import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-
+import { generateNarrowBandSDFSmooth, generateSDFfromDataTexture, generateSDFfromDataTextureSmooth2 } from './generateSDFfromDataTexture'
 import { createShapeMaskTexture } from './createShapeMaskTexture'
   const CustomMaterial = shaderMaterial(
   {
@@ -27,7 +25,7 @@ import { createShapeMaskTexture } from './createShapeMaskTexture'
 float radialGradient(vec2 uv) {
     vec2 center = vec2(0.5, 0.5);
     float dist = distance(uv, center); // max dist ~ 0.707
-    float maxDist = length(vec2(1.,1.)); // sqrt(0.5^2 + 0.5^2)
+    float maxDist = length(vec2(0.5, 0.5)); // sqrt(0.5^2 + 0.5^2)
     return clamp(dist / maxDist, 0.0, 1.0);
 }
     uniform sampler2D uMap;
@@ -39,53 +37,30 @@ uniform sampler2D uAlphaCheck2;
       vNormal = normal;
       
       vec3 pos = position;
-   //  pos.z += 0.1 * abs(sin(pos.x * 1.0) * cos(pos.y * 1.0));
-// float radius = length(pos.xy); // khoảng cách từ (x, y) tới tâm (0, 0)
-// float strength = 0.2; // độ cao phồng
-// float smoothness = 2.0; // càng lớn thì càng nhọn, càng nhỏ thì càng mượt
 
-// pos.z += strength * (1.0 - pow(radius, smoothness));
 
-// float freq = 5.0;
-// float amp = 0.2;
+      vec4 clr = texture2D(uMap, uv);
+      vec4 clr2 = texture2D(uAlphaCheck, vec2(vUv.x,vUv.y));
+      vec4 clr3 = texture2D(uAlphaCheck2, vUv);
+      float grad = radialGradient(uv); // 0.0 ở tâm -> 1.0 ở rìa
 
-// pos.z += amp * abs(sin(length(pos.xy) * freq));
-// Tính khoảng cách đến tâm (theo XY)
+      // Đẩy ra 2 bên Z, nhưng giữ nguyên những điểm có Z = 0
 
-float radius = 1.;
-float strength = 0.01;
-float dist = length(pos.xy);
-//pos.z -= .1 / 2.;
-// Nếu trong vùng ảnh hưởng
-if (dist < radius) {
-    float displacement = sqrt(1.0 - pow(dist / radius, 2.0)) * strength;
-//pos.z += displacement * (pos.z >= 0.0 ? 1.0 : -1.0);
+      vec3 posI = position;
+      posI.z -= 0.05 / 2.;
+      if (abs(posI.z) >= 0.001) {
+          float direction = sign(posI.z); // +1 hoặc -1
+          float strength = 0.6;
+          float displacement = (1.0 - grad) * strength;   ////   * clr2.r
 
-}
-
-vec4 clr = texture2D(uMap, uv);
-vec4 clr2 = texture2D(uAlphaCheck, vUv);
-vec4 clr3 = texture2D(uAlphaCheck2, vUv);
-float grad = radialGradient(uv); // 0.0 ở tâm -> 1.0 ở rìa
-
- float direction = sign(position.z); // +1 hoặc -1
-    float strengths = 0.6;
-   float pushedg = smoothstep(0., 1.0, 1.- clr3.r) * 1.;
-
-    float displacement =  strengths  * (clr2.r / 1.)  ;   ////  
-   
-   //pos.z = position.z +  displacement * direction;
-  
-    // pos.z =  displacement * direction;
-      float inflateStrength = smoothstep(0.1, 1.0, abs(normal.z));
-
-      pos.z *= .05;
-      if(abs(position.z) > .02) {
-        //pos.z += mix(0.,(1.0 - grad) * .5 * direction ,clr2.r / 2.);
-        //pos.z -= .06 * direction;
+          pos.z = posI.z +  direction * clr2.r;
+          
+      } else {
+          pos.z = posI.z; // giữ nguyên nếu z = 0
       }
-      // 
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+
+
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(posI, 1.0);
     }
   `,
   // fragment shader
@@ -107,26 +82,14 @@ sdfMask = smoothstep(.2,.5,sdfMask);
 // Cách 1: Nhân vào nhưng giữ vùng đen rõ ràng
 vec3 result = mix(baseColor, vec3(0.0), 1.0 - sdfMask.r);
 
-gl_FragColor = vec4(result, 1.0);
-         gl_FragColor = vec4(normalize(vNormal) ,1.);
+gl_FragColor = vec4( clr2.rgb, 1.0);
+//gl_FragColor = vec4(sdfMask, 1.0);
+       //  gl_FragColor = vec4(normalize(vNormal) ,1.);
     }
   `
 )
 extend({CustomMaterial})
-function resampleShape(points, segmentLength = 2) {
-  const curve = new THREE.CatmullRomCurve3(
-    points.map(p => new THREE.Vector3(p.x, p.y, 0)),
-    true,
-    'catmullrom',
-    0.5
-  )
 
-  const length = curve.getLength()
-  const segments = Math.round(length / segmentLength)
-  const spaced = curve.getSpacedPoints(segments)
-
-  return spaced.map(p => ({ x: p.x, y: p.y }))
-}
 
 function findContourPath_ConvexHull(imageData, width, height) {
   const isWhite = (x, y) => {
@@ -515,8 +478,8 @@ function useShapeGeometryFromImage(url, resolution = 1) {
         }
 
        let simplifiedContour = simplifyContour(contour, resolution)
-console.log(simplifiedContour)
-simplifiedContour = smoothContour(simplifiedContour, 72)
+
+simplifiedContour = smoothContour(simplifiedContour, 50)
 
 // Convert to THREE.Vector2 và normalize
 let points = simplifiedContour.map(p => new THREE.Vector2(
@@ -551,35 +514,32 @@ const shape = new THREE.Shape(points)
 
 
           const extrudeSettings = {
-            depth:0.0,
-            bevelEnabled: true,
-             bevelSegments: 2,
-             bevelThickness: .1,
+            depth:0.05,
+            bevelEnabled: false,
+             bevelSegments: 1,
+             bevelThickness: .06,
             bevelOffset:0,
-             bevelSize: .07,
+             bevelSize: .01,
           }
 
      
 
           geo = new THREE.ExtrudeGeometry(shape, extrudeSettings)
+
+ 
+//geo = geo.toNonIndexed()
+ //inflateZLikeSphere(geo, .2)
+// Áp dụng subdivision
 const iterations = 2
 geo = LoopSubdivision.modify(geo, iterations, {
   split: true,
   uvSmooth: false,
-  preserveEdges: true,
+  preserveEdges: false,
   flatOnly: false,
   maxTriangles: Infinity,
 })
 
-// geo = BufferGeometryUtils.mergeVertices(geo);
 
-// // 3. Sau đó mới toIndexed (nếu cần, nhưng mergeVertices thường sẽ tạo ra index rồi)
-// if (!geo.index) {
-//   geo = geo.toNonIndexed(); // Nếu chưa có index
-//   geo = BufferGeometryUtils.mergeVertices(geo);
-//   geo = geo.toIndexed();
-// }
-// console.log()
   
          // geo = new THREE.ShapeGeometry(shape2)
         } else {
@@ -627,7 +587,7 @@ geo = LoopSubdivision.modify(geo, iterations, {
   return { geometry, loading, error,texshape }
 }
 // Component mesh
-export default function ShapeMesh({ url,urlImg, resolution = 10 }) {
+export default function ShapeMesh({ url,urlImg, resolution = 1 }) {
   const { geometry, loading, error,texshape } = useShapeGeometryFromImage(url, resolution)
   const textureImg = useTexture(urlImg)
 
@@ -689,13 +649,21 @@ mat.onBeforeCompile = (shader) => {
   {/*   <axesHelper args={[5]}/> */}
  {/*     <Center> */}
        <mesh geometry={geometry} castShadow receiveShadow /* material={mat} */>
-         <customMaterial   wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current}  uMap={textureImg}/>
+         <customMaterial   wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={generateNarrowBandSDFSmooth(texshape)}  uMap={textureImg}/>
       </mesh>
 {/*       </Center> */}
-
+    <axesHelper args={[5]}/>
       <mesh position={[0, 2, 0]}>
         <planeGeometry args={[1, 1]} />
+        <meshBasicMaterial map={generateSDFfromDataTexture(texshape)} />
+      </mesh>
+       <mesh position={[1, 2, 0]}>
+        <planeGeometry args={[1, 1]} />
         <meshBasicMaterial map={generateNarrowBandSDFSmooth(texshape)} />
+      </mesh>
+       <mesh position={[2, 2, 0]}>
+        <planeGeometry args={[1, 1]} />
+        <meshBasicMaterial map={texshape} />
       </mesh>
     </>
   )

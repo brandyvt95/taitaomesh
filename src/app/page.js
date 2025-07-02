@@ -32,7 +32,7 @@ export default function Home() {
     }
   };
   const {toggle} = useControls('gen mesh - lapcian + CTD _ buffer',{
-    toggle:{value:false}
+    toggle:{value:true}
   })
   return (
     <main className="p-8">

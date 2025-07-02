@@ -38,7 +38,18 @@ uniform sampler2D uAlphaCheck2;
       vNormal = normal;
       
       vec3 pos = position;
- 
+    pos.z += .05;
+vec4 clr = texture2D(uMap, uv);
+vec4 clr2 = texture2D(uAlphaCheck, vUv);
+vec4 clr3 = texture2D(uAlphaCheck2, vUv);
+float grad = radialGradient(uv); // 0.0 ở tâm -> 1.0 ở rìa
+
+ float direction = sign(position.z); // +1 hoặc -1
+    float strengths = 0.6;
+   float pushedg = smoothstep(0., 1.0, 1.- clr3.r) * 1.;
+
+    float displacement =  strengths  * (clr2.r / 1.)  ;   //// 
+   // pos.z += mix(0.,(1.0 - grad) * .1 * direction ,clr2.r);
       gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
     }
   `,
@@ -450,20 +461,6 @@ function useShapeGeometryFromImage(url, resolution = 1) {
             bevelSize: .15,
           }
 
-
-          console.log(points)
-           shape = new THREE.Shape(points)
-const contour = points.map(p => [p.x, p.y]);
-const edges = [];
-for (let i = 0; i < contour.length; i++) {
-    edges.push([i, (i + 1) % contour.length]);
-}
-
-// Triangulate với exterior: true (để có tam giác bên trong)
-const triangles = cdt2d(contour, edges, { exterior: true });
-
-const vertices = contour.map(([x, y]) => new THREE.Vector3(x, y, 0));
-
 // LỌC CHỈ LẤY TAM GIÁC BÊN TRONG SHAPE
 function isTriangleInside(triangle, vertices, contour) {
     const [a, b, c] = triangle;
@@ -490,25 +487,139 @@ function isPointInPolygon(point, polygon) {
     return inside;
 }
 
-// Lọc tam giác bên trong
+          console.log(points)
+           shape = new THREE.Shape(points)
+const contour = points.map(p => [p.x, p.y]);
+const edges = [];
+for (let i = 0; i < contour.length; i++) {
+    edges.push([i, (i + 1) % contour.length]);
+}
+
+const triangles = cdt2d(contour, edges, { exterior: true });
+const vertices = contour.map(([x, y]) => new THREE.Vector3(x, y, 0));
+
 const insideTriangles = triangles.filter(triangle => 
     isTriangleInside(triangle, vertices, contour)
 );
 
+// THIẾT LẬP ĐỘ DÀY
+const depth = .1 // Điều chỉnh độ dày
+
 const positions = [];
+const indices = [];
+let vertexIndex = 0;
+
+// 1. MẶT TRƯỚC (z = 0)
 for (const [a, b, c] of insideTriangles) {
     positions.push(...vertices[a].toArray());
     positions.push(...vertices[b].toArray());
     positions.push(...vertices[c].toArray());
+    
+    indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
+    vertexIndex += 3;
 }
 
+// 2. MẶT SAU (z = -depth) - ĐẢO CHIỀU
+for (const [a, b, c] of insideTriangles) {
+    const v1 = [...vertices[a].toArray()];
+    const v2 = [...vertices[b].toArray()];
+    const v3 = [...vertices[c].toArray()];
+    
+    v1[2] = -depth;
+    v2[2] = -depth;
+    v3[2] = -depth;
+    
+    positions.push(...v1, ...v2, ...v3);
+    
+    // Đảo chiều để normal hướng ra ngoài
+    indices.push(vertexIndex + 2, vertexIndex + 1, vertexIndex);
+    vertexIndex += 3;
+}
+
+// // 3. MẶT BÊN (nối 2 mặt)
+for (let i = 0; i < contour.length; i++) {
+    const current = i;
+    const next = (i + 1) % contour.length;
+    
+    // 4 đỉnh của mặt bên
+    const v1 = [contour[current][0], contour[current][1], 0];      // trước-current
+    const v2 = [contour[next][0], contour[next][1], 0];           // trước-next
+    const v3 = [contour[current][0], contour[current][1], -depth]; // sau-current
+    const v4 = [contour[next][0], contour[next][1], -depth];       // sau-next
+    
+    positions.push(...v1, ...v2, ...v3, ...v4);
+    
+    // 2 tam giác cho mặt bên
+    indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);     // tam giác 1
+    indices.push(vertexIndex + 1, vertexIndex + 3, vertexIndex + 2); // tam giác 2
+    vertexIndex += 4;
+}
+// 3. MẶT BÊN BEVEL - THON NHỎ DẦN (nối 2 mặt)
+// const segments = 8; // Số phân đoạn để tạo độ mịn
+// const bevelSize = 0.2; // Độ thon vào (0 = không thon, 1 = thon hoàn toàn)
+
+// // Tính tâm của shape để làm điểm co lại
+// const centerX = contour.reduce((sum, p) => sum + p[0], 0) / contour.length;
+// const centerY = contour.reduce((sum, p) => sum + p[1], 0) / contour.length;
+
+// for (let i = 0; i < contour.length; i++) {
+//     const current = i;
+//     const next = (i + 1) % contour.length;
+    
+//     const startVertexIndex = vertexIndex;
+    
+//     // Tạo các điểm dọc theo độ cao với bevel
+//     for (let s = 0; s <= segments; s++) {
+//         const t = s / segments; // 0 (trên) đến 1 (dưới)
+        
+//         // Tính hệ số co lại dần theo độ sâu (smooth curve)
+//         const shrinkFactor = 1 - bevelSize * (1 - Math.cos(t * Math.PI * 0.5));
+        
+//         // Tọa độ gốc của 2 điểm đầu/cuối cạnh
+//         const startX = contour[current][0];
+//         const startY = contour[current][1];
+//         const endX = contour[next][0];
+//         const endY = contour[next][1];
+        
+//         // Co lại về tâm theo hệ số
+//         const currentX = centerX + (startX - centerX) * shrinkFactor;
+//         const currentY = centerY + (startY - centerY) * shrinkFactor;
+//         const nextX = centerX + (endX - centerX) * shrinkFactor;
+//         const nextY = centerY + (endY - centerY) * shrinkFactor;
+        
+//         // Z thay đổi tuyến tính từ 0 đến -depth
+//         const z = -t * depth;
+        
+//         positions.push(currentX, currentY, z); // điểm current
+//         positions.push(nextX, nextY, z);       // điểm next
+//         vertexIndex += 2;
+//     }
+    
+//     // Tạo tam giác nối các điểm
+//     for (let s = 0; s < segments; s++) {
+//         const baseIndex = startVertexIndex + s * 2;
+        
+//         const v1 = baseIndex;     // current-hiện tại
+//         const v2 = baseIndex + 1; // next-hiện tại  
+//         const v3 = baseIndex + 2; // current-tiếp theo
+//         const v4 = baseIndex + 3; // next-tiếp theo
+        
+//         // Tam giác 1: v1, v3, v2
+//         indices.push(v1, v3, v2);
+//         // Tam giác 2: v2, v3, v4  
+//         indices.push(v2, v3, v4);
+//     }
+// }
+// TẠO GEOMETRY
  geo = new THREE.BufferGeometry();
 geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+geo.setIndex(indices);
 geo.computeVertexNormals();
+
          
 
        
-          const iterations = 3
+          const iterations = 2
           geo = LoopSubdivision.modify(geo, iterations, {
             split: true,
             uvSmooth: false,
@@ -516,7 +627,7 @@ geo.computeVertexNormals();
             flatOnly: false,
             maxTriangles: Infinity,
           })
-      // inflateLaplacianZ(geo, 0.1,points); // chỉ cần strength
+     //inflateLaplacianZ(geo, 0.5,points); // chỉ cần strength
 
    const  shapesample = new THREE.Shape(points)
           const matd = new THREE.MeshStandardMaterial({ color: 0x44aa88, side: THREE.DoubleSide });
@@ -602,12 +713,12 @@ export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
     <>
       <axesHelper args={[5]} />
       <mesh geometry={geometry} castShadow receiveShadow /* material={mat} */>
-        <customMaterial wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} />
+        <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} />
       </mesh>
 
       <mesh position={[0, 2, 0]}>
         <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial map={generateNarrowBandSDFSmooth(texshape)} />
+        <meshBasicMaterial map={generateSDFfromDataTexture(texshape,5)} />
       </mesh>
     </>
   )

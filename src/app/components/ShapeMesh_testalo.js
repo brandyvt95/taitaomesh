@@ -87,7 +87,7 @@ function findContourPath_ConvexHull(imageData, width, height) {
     const a = imageData[i + 3]
     return a > 128
   }
-  
+
   // Tìm edge pixels
   const edgePixels = []
   for (let y = 1; y < height - 1; y++) {
@@ -110,13 +110,13 @@ function findContourPath_ConvexHull(imageData, width, height) {
       }
     }
   }
-  
+
   if (edgePixels.length < 3) return []
-  
+
   // Tính convex hull bằng Graham scan
   function convexHull(points) {
     if (points.length < 3) return points
-    
+
     // Tìm điểm có y nhỏ nhất (leftmost nếu tie)
     let start = points[0]
     for (let i = 1; i < points.length; i++) {
@@ -124,7 +124,7 @@ function findContourPath_ConvexHull(imageData, width, height) {
         start = points[i]
       }
     }
-    
+
     // Sắp xếp theo góc polar
     const sorted = points.filter(p => p !== start)
     sorted.sort((a, b) => {
@@ -132,51 +132,51 @@ function findContourPath_ConvexHull(imageData, width, height) {
       const angleB = Math.atan2(b.y - start.y, b.x - start.x)
       return angleA - angleB
     })
-    
+
     // Graham scan
     const hull = [start, sorted[0]]
-    
+
     for (let i = 1; i < sorted.length; i++) {
-      while (hull.length > 1 && crossProduct(hull[hull.length-2], hull[hull.length-1], sorted[i]) <= 0) {
+      while (hull.length > 1 && crossProduct(hull[hull.length - 2], hull[hull.length - 1], sorted[i]) <= 0) {
         hull.pop()
       }
       hull.push(sorted[i])
     }
-    
+
     return hull
   }
-  
+
   function crossProduct(o, a, b) {
     return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
   }
-  
+
   // Lấy convex hull
   const hull = convexHull(edgePixels)
-  
+
   // Thêm điểm trên các cạnh nối giữa các đỉnh
   function addPointsOnEdges(hullPoints, density = 5) {
     const result = []
-    
+
     for (let i = 0; i < hullPoints.length; i++) {
       const current = hullPoints[i]
       const next = hullPoints[(i + 1) % hullPoints.length]
-      
+
       result.push(current)
-      
+
       // Tính khoảng cách giữa 2 điểm
       const dx = next.x - current.x
       const dy = next.y - current.y
       const distance = Math.sqrt(dx * dx + dy * dy)
-      
+
       // Chỉ thêm điểm nếu khoảng cách đủ lớn
       if (distance > density) {
         const steps = Math.floor(distance / density)
-        
+
         for (let j = 1; j < steps; j++) {
           const t = j / steps
           const interpolatedX = Math.round(current.x + dx * t)
           const interpolatedY = Math.round(current.y + dy * t)
-          
+
           // Kiểm tra điểm interpolated có nằm trên edge không
           if (isWhite(interpolatedX, interpolatedY)) {
             // Kiểm tra có edge neighbor không
@@ -191,7 +191,7 @@ function findContourPath_ConvexHull(imageData, width, height) {
               }
               if (hasBlackNeighbor) break
             }
-            
+
             if (hasBlackNeighbor) {
               result.push({ x: interpolatedX, y: interpolatedY })
             }
@@ -199,13 +199,13 @@ function findContourPath_ConvexHull(imageData, width, height) {
         }
       }
     }
-    
+
     return result
   }
-  
+
   // Thêm điểm trên cạnh
   const finalContour = addPointsOnEdges(hull, 3)
-  
+
   return finalContour
 }
 
@@ -372,19 +372,28 @@ function smoothContour(points, segments = 100, closed = true) {
   // Convert lại về mảng {x, y}
   return smoothPoints.map(p => ({ x: p.x, y: p.y }))
 }
-function mirrorGeometry(geometry, axis = 'z') {
+function mirrorGeometry(geometry, axis = 'z', depth = 1) {
   const mirrored = geometry.clone();
-
   const pos = mirrored.attributes.position;
+
   for (let i = 0; i < pos.count; i++) {
-    if (axis === 'x') pos.setX(i, -pos.getX(i));
-    if (axis === 'y') pos.setY(i, -pos.getY(i));
-    if (axis === 'z') pos.setZ(i, -pos.getZ(i));
+    if (axis === 'x') {
+      pos.setX(i, -pos.getX(i));       // Lật
+      pos.setX(i, pos.getX(i) - depth); // Dịch ra xa
+    }
+    if (axis === 'y') {
+      pos.setY(i, -pos.getY(i));
+      pos.setY(i, pos.getY(i) - depth);
+    }
+    if (axis === 'z') {
+      pos.setZ(i, -pos.getZ(i));
+      pos.setZ(i, pos.getZ(i) - depth);
+    }
   }
 
   pos.needsUpdate = true;
 
-  // Lật mặt tam giác vì bị ngược mặt (nếu có mặt)
+  // Lật mặt tam giác
   if (mirrored.index) {
     const index = mirrored.index.array;
     for (let i = 0; i < index.length; i += 3) {
@@ -397,6 +406,134 @@ function mirrorGeometry(geometry, axis = 'z') {
 
   return mirrored;
 }
+function createBridgeGeometry(contour, depth = 1) {
+  const geometry = new THREE.BufferGeometry();
+  const positions = [];
+  const indices = [];
+
+  const isArray = Array.isArray(contour[0]);
+  const len = contour.length;
+
+  for (let i = 0; i < len; i++) {
+    const curr = isArray ? contour[i] : [contour[i].x, contour[i].y];
+    const next = isArray ? contour[(i + 1) % len] : [contour[(i + 1) % len].x, contour[(i + 1) % len].y];
+
+    // 4 điểm: bottom1, bottom2, top1, top2
+    const [x1, y1] = curr;
+    const [x2, y2] = next;
+
+    // Đặt 2 mặt song song dọc theo trục Z
+    const z0 = 0;
+    const z1 = depth;
+
+    const baseIndex = positions.length / 3;
+
+    // Bottom face (z0)
+    positions.push(x1, y1, z0); // 0
+    positions.push(x2, y2, z0); // 1
+
+    // Top face (z1)
+    positions.push(x1, y1, z1); // 2
+    positions.push(x2, y2, z1); // 3
+
+    // 2 tam giác tạo mặt bên
+    indices.push(baseIndex + 0, baseIndex + 2, baseIndex + 1);
+    indices.push(baseIndex + 2, baseIndex + 3, baseIndex + 1);
+  }
+
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+
+  return geometry;
+}
+function createInflatedBridgeGeometry(contour, depth = 1, segments = 10) {
+  // Input validation
+  if (!Array.isArray(contour) || !contour.every(p => Array.isArray(p) && p.length === 2 && p.every(n => typeof n === 'number'))) {
+    throw new Error('Contour must be an array of [x, y] number pairs');
+  }
+  if (contour.length < 3) {
+    throw new Error('Contour must have at least 3 points');
+  }
+  if (typeof depth !== 'number' || depth <= 0) {
+    throw new Error('depth must be a positive number');
+  }
+  if (typeof segments !== 'number' || segments < 1) {
+    throw new Error('segments must be at least 1');
+  }
+
+  const positions = [];
+  const indices = [];
+  const len = contour.length;
+
+  // Compute centroid
+  const centroid = new THREE.Vector2(0, 0);
+  contour.forEach(([x, y]) => centroid.add(new THREE.Vector2(x, y)));
+  centroid.divideScalar(len);
+
+  // Calculate distance to contour
+  function distanceToContour(p) {
+    const v = new THREE.Vector2(p[0], p[1]);
+    let minDist = Infinity;
+    for (let i = 0; i < contour.length; i++) {
+      const a = new THREE.Vector2(contour[i][0], contour[i][1]);
+      const b = new THREE.Vector2(contour[(i + 1) % contour.length][0], contour[(i + 1) % contour.length][1]);
+      const ab = b.clone().sub(a);
+      const ap = v.clone().sub(a);
+      const t = THREE.MathUtils.clamp(ap.dot(ab) / ab.lengthSq(), 0, 1);
+      const proj = a.clone().add(ab.multiplyScalar(t));
+      const dist = v.distanceTo(proj);
+      if (dist < minDist) minDist = dist;
+    }
+    return minDist;
+  }
+
+  // Compute max distance to contour
+  let maxDist = 0;
+  const distances = contour.map(p => {
+    const d = distanceToContour(p);
+    if (d > maxDist) maxDist = d;
+    return d;
+  });
+
+  // Generate vertices for each layer
+  for (let s = 0; s <= segments; s++) {
+    const t = s / segments; // [0, 1]
+    const zBase = -depth * t; // From z=0 to z=-depth
+    const inflate = (1 + Math.cos(Math.PI * t)) / 2; // Cosine bulge
+
+    for (let i = 0; i < len; i++) {
+      const [x, y] = contour[i];
+      const dist = new THREE.Vector2(x, y).distanceTo(centroid);
+      const tDist = Math.min(dist / maxDist, 1); // Normalized distance to centroid
+      const zInflate = depth * 0.5 * (1 - tDist * tDist) * inflate; // Parabolic z-inflation
+      positions.push(x, y, zBase + zInflate);
+    }
+  }
+
+  // Generate side faces
+  for (let s = 0; s < segments; s++) {
+    const current = s * len;
+    const next = (s + 1) * len;
+    for (let i = 0; i < len; i++) {
+      const a = current + i;
+      const b = current + (i + 1) % len;
+      const c = next + (i + 1) % len;
+      const d = next + i;
+      indices.push(a, b, d); // First triangle
+      indices.push(b, c, d); // Second triangle
+    }
+  }
+
+  // Create geometry
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+
+  return geometry;
+}
+
 function createBridgeBetweenContours(contourIndices, vertices1, vertices2) {
   const positions = [];
   const indices = [];
@@ -892,7 +1029,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
 
 
 
-          const iterations = 2
+          const iterations = 1
           geo = LoopSubdivision.modify(geo, iterations, {
             split: true,
             uvSmooth: false,
@@ -902,23 +1039,24 @@ function useShapeGeometryFromImage(url, resolution = 1) {
           })
           //inflateLaplacianZ(geo, 0.5,points); // chỉ cần strength
           let inflatedGeometry = inflateMesh(geo, contour, .2);
-         
-          inflatedGeometry = LoopSubdivision.modify(inflatedGeometry, 1, {
+
+
+          const shapesample = new THREE.Shape(points)
+          const matd = new THREE.MeshStandardMaterial({ color: 0x44aa88, wireframe: true, side: THREE.DoubleSide });
+
+
+          const DEPTH_CS = .02
+          let sideGeo = createBridgeGeometry(contour, -DEPTH_CS)
+
+          geo = mergeGeometries([inflatedGeometry, mirrorGeometry(inflatedGeometry, 'z', DEPTH_CS), sideGeo]);
+          geo = LoopSubdivision.modify(geo, 2, {
             split: true,
             uvSmooth: false,
             preserveEdges: true,
-            flatOnly: true,
+            flatOnly: false,
             maxTriangles: Infinity,
           })
-           inflatedGeometry = smoothGeometry(inflatedGeometry, 5, 0.9);
-          const shapesample = new THREE.Shape(points)
-          const matd = new THREE.MeshStandardMaterial({ color: 0x44aa88, wireframe: true, side: THREE.DoubleSide });
-         
-  
-    
-
-          geo = mergeGeometries([inflatedGeometry, mirrorGeometry(inflatedGeometry, 'z')]);
-
+          geo = smoothGeometry(geo, 5, 0.9);
 
           //geo = new THREE.ShapeGeometry(shape2)
         } else {
@@ -999,16 +1137,20 @@ export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
   return (
     <>
       <axesHelper args={[5]} />
-     
+
       <mesh geometry={geometry} castShadow receiveShadow /* material={mat} */>
-      <meshBasicMaterial map={textureImg} side={2} wireframe={wireframes}/>
+        <meshPhongMaterial map={textureImg} side={2} wireframe={wireframes} />
         {/* <meshNormalMaterial side={2}  wireframe={wireframes} /> */}
-      {/*   <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} /> */}
+        {/*   <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} /> */}
       </mesh>
 
-      <mesh position={[0, 2, 0]}>
+      <mesh position={[0, 1.5, 0]}>
         <planeGeometry args={[1, 1]} />
         <meshBasicMaterial map={generateSDFfromDataTexture(texshape, 5)} />
+      </mesh>
+      <mesh position={[1, 1.5, 0]}>
+        <planeGeometry args={[1, 1]} />
+        <meshBasicMaterial map={texshape} />
       </mesh>
     </>
   )

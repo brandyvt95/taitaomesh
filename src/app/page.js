@@ -1,5 +1,5 @@
 'use client';
-
+import * as THREE from 'three'
 import { useState } from 'react';
 
 import { Canvas } from '@react-three/fiber'
@@ -31,9 +31,19 @@ export default function Home() {
       alert(error.error || 'Failed to process image');
     }
   };
-  const {toggle} = useControls('gen mesh - lapcian + CTD _ buffer',{
-    toggle:{value:true}
+  const { toggle } = useControls('gen mesh - lapcian + CTD _ buffer', {
+    toggle: { value: true }
   })
+
+  const shapes = [
+    { position: [4, 0, 0], url: '/shape2.png', urlImg: '/shape.jpg' },
+    { position: [2, 0, 0], url: '/shape3.png', urlImg: '/shape3o.jpg' },
+    { position: [0, 0, 0], url: '/shape2.png', urlImg: '/shape.jpg' },
+    { position: [-2, 0, 0], url: '/shape5.png', urlImg: '/shape5o.webp' },
+    { position: [-4, 0, 0], url: '/shape6.png', urlImg: '/shape6o.webp' },
+  ];
+
+
   return (
     <main className="p-8">
       <h1 className="text-2xl mb-4">Remove Background</h1>
@@ -51,46 +61,42 @@ export default function Home() {
         </div>
       )}
       <div className="w-full h-screen">
-        <Canvas camera={{ position: [0, 0, 3] }} shadows>
+        <Canvas camera={{ position: [0, 0, 3] }} shadows
+         gl={(gl) => {
+    gl.toneMapping = THREE.ACESFilmicToneMapping; // hoặc ReinhardToneMapping
+    gl.outputColorSpace = THREE.SRGBColorSpace;
+    gl.toneMappingExposure = 1.2; // có thể tăng giảm
+  }}
+        >
           <color attach="background" args={['#1a1a1a']} />
           {toggle ? (
             <>
-             <group position={[0,0,0]}>
-            <ShapeMesh_testalo  url={'/shape2.png'} urlImg={'/shape.jpg'}/>
-          </group>
-          <group position={[4,0,0]}>
-            <ShapeMesh_testalo url={'/shape3.png'} urlImg={'/shape3o.jpg'}/>
-          </group>
-          <group position={[-4,0,0]}>
-            <ShapeMesh_testalo url={'/shape4.png'} urlImg={'/shape4o.jpg'}/>
-          </group>
-          <group position={[0,0,4]}>
-            <ShapeMesh_testalo url={'/shape5.png'} urlImg={'/shape5o.webp'}/>
-          </group> 
-          <group position={[-4,0,4]}>
-            <ShapeMesh_testalo url={'/shape6.png'} urlImg={'/shape6o.webp'}/>
-          </group>
+              {shapes.map((shape, index) => (
+                <group key={index} position={shape.position}>
+                  <ShapeMesh_testalo url={shape.url} urlImg={shape.urlImg} />
+                </group>
+              ))}
             </>
-          ):(
+          ) : (
             <>
-             <group position={[0,0,0]}>
-            <ShapeMesh  url={'/shape2.png'} urlImg={'/shape.jpg'}/>
-          </group>
-          <group position={[4,0,0]}>
-            <ShapeMesh url={'/shape3.png'} urlImg={'/shape3o.jpg'}/>
-          </group>
-          <group position={[-4,0,0]}>
-            <ShapeMesh url={'/shape4.png'} urlImg={'/shape4o.jpg'}/>
-          </group>
-          <group position={[0,0,4]}>
-            <ShapeMesh url={'/shape5.png'} urlImg={'/shape5o.webp'}/>
-          </group> 
-          <group position={[-4,0,4]}>
-            <ShapeMesh url={'/shape6.png'} urlImg={'/shape6o.webp'}/>
-          </group>
+              <group position={[0, 0, 0]}>
+                <ShapeMesh url={'/shape2.png'} urlImg={'/shape.jpg'} />
+              </group>
+              <group position={[4, 0, 0]}>
+                <ShapeMesh url={'/shape3.png'} urlImg={'/shape3o.jpg'} />
+              </group>
+              <group position={[-4, 0, 0]}>
+                <ShapeMesh url={'/shape4.png'} urlImg={'/shape4o.jpg'} />
+              </group>
+              <group position={[0, 0, 4]}>
+                <ShapeMesh url={'/shape5.png'} urlImg={'/shape5o.webp'} />
+              </group>
+              <group position={[-4, 0, 4]}>
+                <ShapeMesh url={'/shape6.png'} urlImg={'/shape6o.webp'} />
+              </group>
             </>
           )}
-         
+
           {/* Lighting */}
           <ambientLight intensity={1} />
           <directionalLight
@@ -105,7 +111,7 @@ export default function Home() {
           />
           <OrbitControls enableDamping dampingFactor={0.05} />
           {/* Ground plane */}
-         {/*  <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1, 0]} receiveShadow>
+          {/*  <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1, 0]} receiveShadow>
             <planeGeometry args={[10, 10]} />
             <meshStandardMaterial color="#333" />
           </mesh> */}

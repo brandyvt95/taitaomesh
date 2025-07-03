@@ -10,6 +10,8 @@ import { extractAlphaDataTextureWithMipmaps, extractAlphaToDataTexture, findCont
 import { generateNarrowBandSDFSmooth, generateSDFfromDataTexture } from './generateSDFfromDataTexture'
 import { createShapeMaskTexture } from './createShapeMaskTexture'
 import cdt2d from 'cdt2d'
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+
 const CustomMaterial = shaderMaterial(
   {
     uTime: 0,
@@ -78,13 +80,135 @@ gl_FragColor = vec4(result, 1.0);
   `
 )
 extend({ CustomMaterial })
+function findContourPath_ConvexHull(imageData, width, height) {
+  const isWhite = (x, y) => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return false
+    const i = (y * width + x) * 4
+    const a = imageData[i + 3]
+    return a > 128
+  }
+  
+  // Tìm edge pixels
+  const edgePixels = []
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      if (isWhite(x, y)) {
+        let hasBlackNeighbor = false
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue
+            if (!isWhite(x + dx, y + dy)) {
+              hasBlackNeighbor = true
+              break
+            }
+          }
+          if (hasBlackNeighbor) break
+        }
+        if (hasBlackNeighbor) {
+          edgePixels.push({ x, y })
+        }
+      }
+    }
+  }
+  
+  if (edgePixels.length < 3) return []
+  
+  // Tính convex hull bằng Graham scan
+  function convexHull(points) {
+    if (points.length < 3) return points
+    
+    // Tìm điểm có y nhỏ nhất (leftmost nếu tie)
+    let start = points[0]
+    for (let i = 1; i < points.length; i++) {
+      if (points[i].y < start.y || (points[i].y === start.y && points[i].x < start.x)) {
+        start = points[i]
+      }
+    }
+    
+    // Sắp xếp theo góc polar
+    const sorted = points.filter(p => p !== start)
+    sorted.sort((a, b) => {
+      const angleA = Math.atan2(a.y - start.y, a.x - start.x)
+      const angleB = Math.atan2(b.y - start.y, b.x - start.x)
+      return angleA - angleB
+    })
+    
+    // Graham scan
+    const hull = [start, sorted[0]]
+    
+    for (let i = 1; i < sorted.length; i++) {
+      while (hull.length > 1 && crossProduct(hull[hull.length-2], hull[hull.length-1], sorted[i]) <= 0) {
+        hull.pop()
+      }
+      hull.push(sorted[i])
+    }
+    
+    return hull
+  }
+  
+  function crossProduct(o, a, b) {
+    return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+  }
+  
+  // Lấy convex hull
+  const hull = convexHull(edgePixels)
+  
+  // Thêm điểm trên các cạnh nối giữa các đỉnh
+  function addPointsOnEdges(hullPoints, density = 5) {
+    const result = []
+    
+    for (let i = 0; i < hullPoints.length; i++) {
+      const current = hullPoints[i]
+      const next = hullPoints[(i + 1) % hullPoints.length]
+      
+      result.push(current)
+      
+      // Tính khoảng cách giữa 2 điểm
+      const dx = next.x - current.x
+      const dy = next.y - current.y
+      const distance = Math.sqrt(dx * dx + dy * dy)
+      
+      // Chỉ thêm điểm nếu khoảng cách đủ lớn
+      if (distance > density) {
+        const steps = Math.floor(distance / density)
+        
+        for (let j = 1; j < steps; j++) {
+          const t = j / steps
+          const interpolatedX = Math.round(current.x + dx * t)
+          const interpolatedY = Math.round(current.y + dy * t)
+          
+          // Kiểm tra điểm interpolated có nằm trên edge không
+          if (isWhite(interpolatedX, interpolatedY)) {
+            // Kiểm tra có edge neighbor không
+            let hasBlackNeighbor = false
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue
+                if (!isWhite(interpolatedX + dx, interpolatedY + dy)) {
+                  hasBlackNeighbor = true
+                  break
+                }
+              }
+              if (hasBlackNeighbor) break
+            }
+            
+            if (hasBlackNeighbor) {
+              result.push({ x: interpolatedX, y: interpolatedY })
+            }
+          }
+        }
+      }
+    }
+    
+    return result
+  }
+  
+  // Thêm điểm trên cạnh
+  const finalContour = addPointsOnEdges(hull, 3)
+  
+  return finalContour
+}
 
-
-
-// Cách sử dụng thay thế trong code của bạn:
-// const contour = findContourPath_ConvexHull(imgData.data, img.width, img.height)
-
-// Improved contour tracing using Moore boundary tracing algorithm
 function findContourPath(imageData, width, height) {
   const isWhite = (x, y) => {
     if (x < 0 || x >= width || y < 0 || y >= height) return false
@@ -161,7 +285,78 @@ function findContourPath(imageData, width, height) {
 
   return contour
 }
+function smoothGeometry(geometry, iterations = 1, lambda = 0.5) {
+  // Input validation
+  if (!(geometry instanceof THREE.BufferGeometry) || !geometry.attributes.position) {
+    throw new Error('Input must be a THREE.BufferGeometry with a position attribute');
+  }
 
+  const positionAttribute = geometry.attributes.position;
+  const indices = geometry.index ? geometry.index.array : null;
+  const vertexCount = positionAttribute.count;
+
+  // Extract vertices
+  const vertices = [];
+  for (let i = 0; i < vertexCount; i++) {
+    vertices.push(new THREE.Vector3(
+      positionAttribute.getX(i),
+      positionAttribute.getY(i),
+      positionAttribute.getZ(i)
+    ));
+  }
+
+  // Build adjacency list for vertices
+  const adjacency = Array(vertexCount).fill().map(() => []);
+  if (indices) {
+    for (let i = 0; i < indices.length; i += 3) {
+      const a = indices[i];
+      const b = indices[i + 1];
+      const c = indices[i + 2];
+      adjacency[a].push(b, c);
+      adjacency[b].push(a, c);
+      adjacency[c].push(a, b);
+    }
+  } else {
+    // Assume triangles from vertex order
+    for (let i = 0; i < vertexCount; i += 3) {
+      const a = i;
+      const b = i + 1;
+      const c = i + 2;
+      adjacency[a].push(b, c);
+      adjacency[b].push(a, c);
+      adjacency[c].push(a, b);
+    }
+  }
+
+  // Laplacian smoothing
+  for (let iter = 0; iter < iterations; iter++) {
+    const newPositions = vertices.map(v => v.clone());
+
+    for (let i = 0; i < vertexCount; i++) {
+      const neighbors = adjacency[i];
+      if (neighbors.length === 0) continue; // Skip isolated vertices
+
+      // Compute average position of neighbors
+      const avg = new THREE.Vector3();
+      neighbors.forEach(n => avg.add(vertices[n]));
+      avg.divideScalar(neighbors.length);
+
+      // Update position: lerp between current position and average
+      newPositions[i].lerpVectors(vertices[i], avg, lambda);
+    }
+
+    // Update vertices
+    vertices.forEach((v, i) => {
+      positionAttribute.setXYZ(i, v.x, v.y, v.z);
+    });
+    positionAttribute.needsUpdate = true;
+  }
+
+  // Recalculate normals
+  geometry.computeVertexNormals();
+
+  return geometry;
+}
 function smoothContour(points, segments = 100, closed = true) {
   if (points.length < 2) return points
 
@@ -177,193 +372,72 @@ function smoothContour(points, segments = 100, closed = true) {
   // Convert lại về mảng {x, y}
   return smoothPoints.map(p => ({ x: p.x, y: p.y }))
 }
+function mirrorGeometry(geometry, axis = 'z') {
+  const mirrored = geometry.clone();
 
-function centerGeometryZ(geometry, depth = 1) {
-  const posAttr = geometry.attributes.position;
-  const positions = posAttr.array;
-  
-  for (let i = 0; i < positions.length; i += 3) {
-    positions[i + 2] -= depth / 2; // i + 2 là trục z
+  const pos = mirrored.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    if (axis === 'x') pos.setX(i, -pos.getX(i));
+    if (axis === 'y') pos.setY(i, -pos.getY(i));
+    if (axis === 'z') pos.setZ(i, -pos.getZ(i));
   }
 
-  posAttr.needsUpdate = true;
-  geometry.computeBoundingBox();
-  geometry.computeBoundingSphere();
+  pos.needsUpdate = true;
+
+  // Lật mặt tam giác vì bị ngược mặt (nếu có mặt)
+  if (mirrored.index) {
+    const index = mirrored.index.array;
+    for (let i = 0; i < index.length; i += 3) {
+      const tmp = index[i];
+      index[i] = index[i + 1];
+      index[i + 1] = tmp;
+    }
+    mirrored.index.needsUpdate = true;
+  }
+
+  return mirrored;
 }
-function inflateLaplacianZ(geometry, strength = 1.0, originalPoints = null) {
-  const positions = geometry.attributes.position;
-  const vertices = positions.array;
-  const vertexCount = positions.count;
-  
-  console.log('Processing', vertexCount, 'vertices');
-  
-  const boundaryVertices = new Set();
-  
-  if (originalPoints && originalPoints.length > 0) {
-    console.log('Using original shape points for boundary detection');
-    console.log('Original points count:', originalPoints.length);
-    
-    // Tạo array các điểm gốc để so sánh
-    const shapePoints = [];
-    for (let i = 0; i < originalPoints.length; i++) {
-      shapePoints.push({
-        x: originalPoints[i].x,
-        y: originalPoints[i].y
-      });
-    }
-    
-    // Tìm boundary vertices bằng cách so sánh với shape points
-    const tolerance = 0.01; // Threshold để so sánh điểm
-    
-    for (let i = 0; i < vertexCount; i++) {
-      const vx = vertices[i * 3];
-      const vy = vertices[i * 3 + 1];
-      
-      // Kiểm tra xem vertex này có gần với bất kỳ shape point nào không
-      let isOnBoundary = false;
-      
-      for (let j = 0; j < shapePoints.length; j++) {
-        const dx = vx - shapePoints[j].x;
-        const dy = vy - shapePoints[j].y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        
-        if (distance < tolerance) {
-          isOnBoundary = true;
-          break;
-        }
-      }
-      
-      // Nếu không gần shape point nào, kiểm tra xem có nằm trên edge không
-      if (!isOnBoundary) {
-        for (let j = 0; j < shapePoints.length; j++) {
-          const p1 = shapePoints[j];
-          const p2 = shapePoints[(j + 1) % shapePoints.length];
-          
-          // Tính khoảng cách từ vertex đến line segment
-          const distToLine = distanceToLineSegment(vx, vy, p1.x, p1.y, p2.x, p2.y);
-          
-          if (distToLine < tolerance) {
-            isOnBoundary = true;
-            break;
-          }
-        }
-      }
-      
-      if (isOnBoundary) {
-        boundaryVertices.add(i);
-      }
-    }
-    
-    console.log('Found', boundaryVertices.size, 'boundary vertices using original points');
-  } else {
-    // Fallback: dùng Z coordinate
-    console.log('No original points provided, using Z-coordinate method');
-    const epsilon = 0.001;
-    
-    for (let i = 0; i < vertexCount; i++) {
-      if (Math.abs(vertices[i * 3 + 2]) < epsilon) {
-        boundaryVertices.add(i);
-      }
-    }
-    
-    console.log('Found', boundaryVertices.size, 'boundary vertices via Z-coordinate');
+function createBridgeBetweenContours(contourIndices, vertices1, vertices2) {
+  const positions = [];
+  const indices = [];
+
+  for (let i = 0; i < contourIndices.length; i++) {
+    const curr = contourIndices[i];
+    const next = contourIndices[(i + 1) % contourIndices.length];
+
+    const v1a = vertices1[curr]; // điểm trên inflated
+    const v1b = vertices1[next];
+    const v2a = vertices2[curr]; // điểm đối xứng
+    const v2b = vertices2[next];
+
+    const baseIndex = positions.length / 3;
+
+    positions.push(
+      v1a.x, v1a.y, v1a.z, // 0
+      v1b.x, v1b.y, v1b.z, // 1
+      v2a.x, v2a.y, v2a.z, // 2
+      v2b.x, v2b.y, v2b.z  // 3
+    );
+
+    indices.push(
+      baseIndex, baseIndex + 2, baseIndex + 1,
+      baseIndex + 1, baseIndex + 2, baseIndex + 3
+    );
   }
-  
-  // Function tính khoảng cách từ điểm đến line segment
-  function distanceToLineSegment(px, py, x1, y1, x2, y2) {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const length = Math.sqrt(dx * dx + dy * dy);
-    
-    if (length === 0) {
-      // Line segment là một điểm
-      const dpx = px - x1;
-      const dpy = py - y1;
-      return Math.sqrt(dpx * dpx + dpy * dpy);
-    }
-    
-    // Tính projection của điểm lên line
-    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (length * length)));
-    
-    // Điểm gần nhất trên line segment
-    const projX = x1 + t * dx;
-    const projY = y1 + t * dy;
-    
-    // Khoảng cách từ điểm đến projection
-    const dpx = px - projX;
-    const dpy = py - projY;
-    return Math.sqrt(dpx * dpx + dpy * dpy);
-  }
-  
-  // Tính tâm geometry
-  const center = { x: 0, y: 0 };
-  for (let i = 0; i < vertexCount; i++) {
-    center.x += vertices[i * 3];
-    center.y += vertices[i * 3 + 1];
-  }
-  center.x /= vertexCount;
-  center.y /= vertexCount;
-  
-  // Tìm khoảng cách max từ tâm đến interior vertices
-  let maxInteriorDist = 0;
-  for (let i = 0; i < vertexCount; i++) {
-    if (!boundaryVertices.has(i)) {
-      const dx = vertices[i * 3] - center.x;
-      const dy = vertices[i * 3 + 1] - center.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      maxInteriorDist = Math.max(maxInteriorDist, dist);
-    }
-  }
-  
-  console.log('Center:', center);
-  console.log('Max interior distance:', maxInteriorDist);
-  
-  // Áp dụng pillow effect
-  for (let i = 0; i < vertexCount; i++) {
-    if (boundaryVertices.has(i)) {
-      // Boundary vertex: LUÔN z = 0
-      vertices[i * 3 + 2] = 0;
-    } else {
-      // Interior vertex: tạo pillow effect
-      const dx = vertices[i * 3] - center.x;
-      const dy = vertices[i * 3 + 1] - center.y;
-      const distFromCenter = Math.sqrt(dx * dx + dy * dy);
-      
-      // Normalize distance
-      const normalizedDist = maxInteriorDist > 0 ? Math.min(distFromCenter / maxInteriorDist, 1.0) : 0;
-      
-      // Smooth pillow function - cao nhất ở giữa, mịn về 0 ở boundary
-      const pillowFactor = Math.cos(normalizedDist * Math.PI * 0.5);
-      const pillowHeight = pillowFactor * pillowFactor * strength;
-      
-      vertices[i * 3 + 2] = pillowHeight;
-    }
-  }
-  
-  // FORCE: Đảm bảo tất cả boundary vertices có z = 0
-  boundaryVertices.forEach(idx => {
-    vertices[idx * 3 + 2] = 0;
-  });
-  
-  positions.needsUpdate = true;
-  geometry.computeVertexNormals();
-  
-  console.log('Pillow effect applied successfully!');
-  console.log('Boundary vertices:', boundaryVertices.size, '/', vertexCount);
-  console.log('Boundary percentage:', (boundaryVertices.size / vertexCount * 100).toFixed(1) + '%');
-  
-  // Debug: kiểm tra một vài boundary vertices
-  const boundaryArray = Array.from(boundaryVertices).slice(0, 3);
-  console.log('Sample boundary vertices Z values:', 
-    boundaryArray.map(i => vertices[i * 3 + 2].toFixed(4))
-  );
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  return geo;
 }
-// Improved geometry creation with proper triangulation
+
 function useShapeGeometryFromImage(url, resolution = 1) {
   const [geometry, setGeometry] = useState(null)
   const [loading, setLoading] = useState(false)
   const [texshape, setTexShape] = useState(false)
-  const {scene} = useThree()
+  const { scene } = useThree()
   const [error, setError] = useState(null)
   const {
     extrude,
@@ -401,7 +475,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
         const imgData = ctx.getImageData(0, 0, img.width, img.height)
 
         // Trace contour path
-        const contour = findContourPath(imgData.data, img.width, img.height)
+        const contour = findContourPath_ConvexHull(imgData.data, img.width, img.height)
 
         if (contour.length < 3) {
           setError('Không tìm thấy contour hợp lệ')
@@ -432,7 +506,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
 
         let simplifiedContour = simplifyContour(contour, resolution)
 
-        simplifiedContour = smoothContour(simplifiedContour, 70)
+        simplifiedContour = smoothContour(simplifiedContour, 50)
 
         // Convert to THREE.Vector2 và normalize
         let points = simplifiedContour.map(p => new THREE.Vector2(
@@ -449,7 +523,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
           points.reverse()
         }
 
-        let geo,shape
+        let geo, shape
         if (extrude > 0) {
 
           const extrudeSettings = {
@@ -461,178 +535,391 @@ function useShapeGeometryFromImage(url, resolution = 1) {
             bevelSize: .15,
           }
 
-// LỌC CHỈ LẤY TAM GIÁC BÊN TRONG SHAPE
-function isTriangleInside(triangle, vertices, contour) {
-    const [a, b, c] = triangle;
-    const v1 = vertices[a], v2 = vertices[b], v3 = vertices[c];
-    
-    // Tính trọng tâm tam giác
-    const centroid = {
-        x: (v1.x + v2.x + v3.x) / 3,
-        y: (v1.y + v2.y + v3.y) / 3
-    };
-    
-    // Kiểm tra centroid có trong polygon không
-    return isPointInPolygon(centroid, contour.map(p => ({x: p[0], y: p[1]})));
-}
+          // LỌC CHỈ LẤY TAM GIÁC BÊN TRONG SHAPE
+          function isTriangleInside(triangle, vertices, contour) {
+            const [a, b, c] = triangle;
+            const v1 = vertices[a], v2 = vertices[b], v3 = vertices[c];
 
-function isPointInPolygon(point, polygon) {
-    let inside = false;
-    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-        if (((polygon[i].y > point.y) !== (polygon[j].y > point.y)) &&
-            (point.x < (polygon[j].x - polygon[i].x) * (point.y - polygon[i].y) / (polygon[j].y - polygon[i].y) + polygon[i].x)) {
-            inside = !inside;
-        }
-    }
-    return inside;
-}
+            // Tính trọng tâm tam giác
+            const centroid = {
+              x: (v1.x + v2.x + v3.x) / 3,
+              y: (v1.y + v2.y + v3.y) / 3
+            };
 
-          console.log(points)
-           shape = new THREE.Shape(points)
-const contour = points.map(p => [p.x, p.y]);
-const edges = [];
-for (let i = 0; i < contour.length; i++) {
-    edges.push([i, (i + 1) % contour.length]);
-}
+            // Kiểm tra centroid có trong polygon không
+            return isPointInPolygon(centroid, contour.map(p => ({ x: p[0], y: p[1] })));
+          }
 
-const triangles = cdt2d(contour, edges, { exterior: true });
-const vertices = contour.map(([x, y]) => new THREE.Vector3(x, y, 0));
+          function isPointInPolygon(point, polygon) {
+            let inside = false;
+            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+              if (((polygon[i].y > point.y) !== (polygon[j].y > point.y)) &&
+                (point.x < (polygon[j].x - polygon[i].x) * (point.y - polygon[i].y) / (polygon[j].y - polygon[i].y) + polygon[i].x)) {
+                inside = !inside;
+              }
+            }
+            return inside;
+          }
+          function resample(points, step = 1) {
+            const newPoints = [];
+            for (let i = 0; i < points.length; i++) {
+              const p1 = points[i];
+              const p2 = points[(i + 1) % points.length];
+              const dist = p1.distanceTo(p2);
+              const segments = Math.ceil(dist / step);
+              for (let j = 0; j < segments; j++) {
+                const t = j / segments;
+                newPoints.push(new THREE.Vector2(
+                  p1.x * (1 - t) + p2.x * t,
+                  p1.y * (1 - t) + p2.y * t
+                ));
+              }
+            }
+            return newPoints;
+          }
+          function inflateMesh(geometry, contour, maxHeight = 5) {
+            // Input validation
+            if (!(geometry instanceof THREE.BufferGeometry) || !geometry.attributes.position) {
+              throw new Error('Input must be a THREE.BufferGeometry with a position attribute');
+            }
+            if (!Array.isArray(contour) || !contour.every(p => Array.isArray(p) && p.length === 2 && p.every(n => typeof n === 'number'))) {
+              throw new Error('Contour must be an array of [x, y] number pairs');
+            }
+            if (contour.length < 3) {
+              throw new Error('Contour must have at least 3 points to form a valid polygon');
+            }
+            if (typeof maxHeight !== 'number' || maxHeight <= 0) {
+              throw new Error('maxHeight must be a positive number');
+            }
 
-const insideTriangles = triangles.filter(triangle => 
-    isTriangleInside(triangle, vertices, contour)
-);
+            const contourPoints = contour.map(([x, y]) => new THREE.Vector2(x, y));
 
-// THIẾT LẬP ĐỘ DÀY
-const depth = .1 // Điều chỉnh độ dày
+            // Compute centroid for more even inflation
+            const centroid = new THREE.Vector2(0, 0);
+            contourPoints.forEach(p => centroid.add(p));
+            centroid.divideScalar(contourPoints.length);
 
-const positions = [];
-const indices = [];
-let vertexIndex = 0;
+            // Extract vertices
+            const positionAttribute = geometry.attributes.position;
+            const vertices = [];
+            for (let i = 0; i < positionAttribute.count; i++) {
+              vertices.push(new THREE.Vector3(
+                positionAttribute.getX(i),
+                positionAttribute.getY(i),
+                positionAttribute.getZ(i)
+              ));
+            }
 
-// 1. MẶT TRƯỚC (z = 0)
-for (const [a, b, c] of insideTriangles) {
-    positions.push(...vertices[a].toArray());
-    positions.push(...vertices[b].toArray());
-    positions.push(...vertices[c].toArray());
-    
-    indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
-    vertexIndex += 3;
-}
+            // Check if point is on contour
+            function isOnContour(v) {
+              const p = new THREE.Vector2(v.x, v.y);
+              for (let i = 0; i < contourPoints.length; i++) {
+                const a = contourPoints[i];
+                const b = contourPoints[(i + 1) % contourPoints.length];
+                const ab = b.clone().sub(a);
+                const ap = p.clone().sub(a);
+                const t = THREE.MathUtils.clamp(ap.dot(ab) / ab.lengthSq(), 0, 1);
+                const proj = a.clone().add(ab.multiplyScalar(t));
+                if (p.distanceTo(proj) < 1e-5) return true;
+              }
+              return false;
+            }
 
-// 2. MẶT SAU (z = -depth) - ĐẢO CHIỀU
-for (const [a, b, c] of insideTriangles) {
-    const v1 = [...vertices[a].toArray()];
-    const v2 = [...vertices[b].toArray()];
-    const v3 = [...vertices[c].toArray()];
-    
-    v1[2] = -depth;
-    v2[2] = -depth;
-    v3[2] = -depth;
-    
-    positions.push(...v1, ...v2, ...v3);
-    
-    // Đảo chiều để normal hướng ra ngoài
-    indices.push(vertexIndex + 2, vertexIndex + 1, vertexIndex);
-    vertexIndex += 3;
-}
+            // Calculate distance to contour
+            function distanceToContour(v) {
+              const p = new THREE.Vector2(v.x, v.y);
+              let minDist = Infinity;
+              for (let i = 0; i < contourPoints.length; i++) {
+                const a = contourPoints[i];
+                const b = contourPoints[(i + 1) % contourPoints.length];
+                const ab = b.clone().sub(a);
+                const ap = p.clone().sub(a);
+                const t = THREE.MathUtils.clamp(ap.dot(ab) / ab.lengthSq(), 0, 1);
+                const proj = a.clone().add(ab.multiplyScalar(t));
+                const dist = p.distanceTo(proj);
+                if (dist < minDist) minDist = dist;
+              }
+              return minDist;
+            }
 
-// // 3. MẶT BÊN (nối 2 mặt)
-for (let i = 0; i < contour.length; i++) {
-    const current = i;
-    const next = (i + 1) % contour.length;
-    
-    // 4 đỉnh của mặt bên
-    const v1 = [contour[current][0], contour[current][1], 0];      // trước-current
-    const v2 = [contour[next][0], contour[next][1], 0];           // trước-next
-    const v3 = [contour[current][0], contour[current][1], -depth]; // sau-current
-    const v4 = [contour[next][0], contour[next][1], -depth];       // sau-next
-    
-    positions.push(...v1, ...v2, ...v3, ...v4);
-    
-    // 2 tam giác cho mặt bên
-    indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);     // tam giác 1
-    indices.push(vertexIndex + 1, vertexIndex + 3, vertexIndex + 2); // tam giác 2
-    vertexIndex += 4;
-}
-// 3. MẶT BÊN BEVEL - THON NHỎ DẦN (nối 2 mặt)
-// const segments = 8; // Số phân đoạn để tạo độ mịn
-// const bevelSize = 0.2; // Độ thon vào (0 = không thon, 1 = thon hoàn toàn)
+            // Compute distances to contour and centroid
+            let maxDist = 0;
+            const distances = vertices.map(v => {
+              if (isOnContour(v)) return 0;
+              const d = distanceToContour(v);
+              if (d > maxDist) maxDist = d;
+              return d;
+            });
 
-// // Tính tâm của shape để làm điểm co lại
-// const centerX = contour.reduce((sum, p) => sum + p[0], 0) / contour.length;
-// const centerY = contour.reduce((sum, p) => sum + p[1], 0) / contour.length;
+            // Handle case with no interior vertices
+            if (maxDist === 0) {
+              console.warn('All vertices on contour; no inflation applied.');
+              return geometry.clone();
+            }
 
-// for (let i = 0; i < contour.length; i++) {
-//     const current = i;
-//     const next = (i + 1) % contour.length;
-    
-//     const startVertexIndex = vertexIndex;
-    
-//     // Tạo các điểm dọc theo độ cao với bevel
-//     for (let s = 0; s <= segments; s++) {
-//         const t = s / segments; // 0 (trên) đến 1 (dưới)
-        
-//         // Tính hệ số co lại dần theo độ sâu (smooth curve)
-//         const shrinkFactor = 1 - bevelSize * (1 - Math.cos(t * Math.PI * 0.5));
-        
-//         // Tọa độ gốc của 2 điểm đầu/cuối cạnh
-//         const startX = contour[current][0];
-//         const startY = contour[current][1];
-//         const endX = contour[next][0];
-//         const endY = contour[next][1];
-        
-//         // Co lại về tâm theo hệ số
-//         const currentX = centerX + (startX - centerX) * shrinkFactor;
-//         const currentY = centerY + (startY - centerY) * shrinkFactor;
-//         const nextX = centerX + (endX - centerX) * shrinkFactor;
-//         const nextY = centerY + (endY - centerY) * shrinkFactor;
-        
-//         // Z thay đổi tuyến tính từ 0 đến -depth
-//         const z = -t * depth;
-        
-//         positions.push(currentX, currentY, z); // điểm current
-//         positions.push(nextX, nextY, z);       // điểm next
-//         vertexIndex += 2;
-//     }
-    
-//     // Tạo tam giác nối các điểm
-//     for (let s = 0; s < segments; s++) {
-//         const baseIndex = startVertexIndex + s * 2;
-        
-//         const v1 = baseIndex;     // current-hiện tại
-//         const v2 = baseIndex + 1; // next-hiện tại  
-//         const v3 = baseIndex + 2; // current-tiếp theo
-//         const v4 = baseIndex + 3; // next-tiếp theo
-        
-//         // Tam giác 1: v1, v3, v2
-//         indices.push(v1, v3, v2);
-//         // Tam giác 2: v2, v3, v4  
-//         indices.push(v2, v3, v4);
-//     }
-// }
-// TẠO GEOMETRY
- geo = new THREE.BufferGeometry();
-geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-geo.setIndex(indices);
-geo.computeVertexNormals();
+            // Compute max distance to centroid for normalization
+            let maxCentroidDist = 0;
+            vertices.forEach(v => {
+              if (!isOnContour(v)) {
+                const dist = new THREE.Vector2(v.x, v.y).distanceTo(centroid);
+                if (dist > maxCentroidDist) maxCentroidDist = dist;
+              }
+            });
 
-         
+            // Inflate vertices with parabolic function
+            const newGeometry = geometry.clone();
+            const newPositionAttribute = newGeometry.attributes.position;
+            for (let i = 0; i < newPositionAttribute.count; i++) {
+              if (isOnContour(vertices[i])) {
+                newPositionAttribute.setZ(i, 0);
+              } else {
+                const d = distances[i];
+                const t = Math.min(d / maxDist, 1); // Normalized distance to contour
+                const centroidDist = new THREE.Vector2(vertices[i].x, vertices[i].y).distanceTo(centroid);
+                const tCentroid = Math.min(centroidDist / maxCentroidDist, 1); // Normalized distance to centroid
+                // Combine contour and centroid distances for even inflation
+                const tCombined = Math.max(1 - t, tCentroid); // Prioritize centroid distance for interior
+                const z = maxHeight * (1 - tCombined * tCombined); // Parabolic curve
+                newPositionAttribute.setZ(i, z);
+              }
+            }
+            newPositionAttribute.needsUpdate = true;
 
-       
+            // Recalculate normals
+            newGeometry.computeVertexNormals();
+
+            return newGeometry;
+          }
+
+          function mergeGeometries(geometries) {
+            let mergedGeometry = new THREE.BufferGeometry();
+
+            let positions = [];
+            let normals = [];
+            let uvs = [];
+            let indices = [];
+
+            let vertexOffset = 0;
+
+            geometries.forEach(geometry => {
+              geometry = geometry.clone();
+              geometry = geometry.toNonIndexed(); // Chuyển về non-indexed để dễ merge
+
+              const pos = geometry.attributes.position.array;
+              const norm = geometry.attributes.normal ? geometry.attributes.normal.array : [];
+              const uv = geometry.attributes.uv ? geometry.attributes.uv.array : [];
+
+              for (let i = 0; i < pos.length; i += 3) {
+                positions.push(pos[i], pos[i + 1], pos[i + 2]);
+              }
+
+              for (let i = 0; i < norm.length; i += 3) {
+                normals.push(norm[i], norm[i + 1], norm[i + 2]);
+              }
+
+              for (let i = 0; i < uv.length; i += 2) {
+                uvs.push(uv[i], uv[i + 1]);
+              }
+
+              const vertCount = pos.length / 3;
+              for (let i = 0; i < vertCount; i++) {
+                indices.push(vertexOffset + i);
+              }
+
+              vertexOffset += vertCount;
+            });
+
+            mergedGeometry.setAttribute(
+              'position',
+              new THREE.Float32BufferAttribute(positions, 3)
+            );
+
+            if (normals.length > 0) {
+              mergedGeometry.setAttribute(
+                'normal',
+                new THREE.Float32BufferAttribute(normals, 3)
+              );
+            }
+
+            if (uvs.length > 0) {
+              mergedGeometry.setAttribute(
+                'uv',
+                new THREE.Float32BufferAttribute(uvs, 2)
+              );
+            }
+
+            mergedGeometry.setIndex(indices);
+
+            return mergedGeometry;
+          }
+          function laplacianSmooth(geometry, iterations = 1, boundaryVertexIndices = []) {
+
+            const positionAttr = geometry.attributes.position;
+            const vertexCount = positionAttr.count;
+
+            // Xây dựng danh sách đỉnh kề
+            const neighbors = Array.from({ length: vertexCount }, () => new Set());
+
+            const indexAttr = geometry.index;
+            for (let i = 0; i < indexAttr.count; i += 3) {
+              const a = indexAttr.getX(i);
+              const b = indexAttr.getX(i + 1);
+              const c = indexAttr.getX(i + 2);
+
+              neighbors[a].add(b); neighbors[a].add(c);
+              neighbors[b].add(a); neighbors[b].add(c);
+              neighbors[c].add(a); neighbors[c].add(b);
+            }
+
+            const positions = positionAttr.array;
+            const isBoundary = new Set(boundaryVertexIndices); // Giữ nguyên các điểm biên
+
+            for (let iter = 0; iter < iterations; iter++) {
+              const newPositions = new Float32Array(positions.length);
+
+              for (let i = 0; i < vertexCount; i++) {
+                if (isBoundary.has(i)) {
+                  // Giữ nguyên vị trí điểm biên
+                  newPositions[i * 3 + 0] = positions[i * 3 + 0];
+                  newPositions[i * 3 + 1] = positions[i * 3 + 1];
+                  newPositions[i * 3 + 2] = positions[i * 3 + 2];
+                  continue;
+                }
+
+                let sumX = 0, sumY = 0, sumZ = 0;
+                neighbors[i].forEach(n => {
+                  sumX += positions[n * 3 + 0];
+                  sumY += positions[n * 3 + 1];
+                  sumZ += positions[n * 3 + 2];
+                });
+
+                const nCount = neighbors[i].size;
+                newPositions[i * 3 + 0] = sumX / nCount;
+                newPositions[i * 3 + 1] = sumY / nCount;
+                newPositions[i * 3 + 2] = sumZ / nCount;
+              }
+
+              // Cập nhật vị trí
+              positionAttr.array.set(newPositions);
+              positionAttr.needsUpdate = true;
+            }
+
+            geometry.computeVertexNormals();
+            return geometry;
+          }
+
+          points = resample(points, 5); // bước 5 đơn vị
+
+          shape = new THREE.Shape(points)
+          const contour = points.map(p => [p.x, p.y]);
+          const contourIndices = contour.map((_, i) => i);
+
+          const edges = [];
+          for (let i = 0; i < contour.length; i++) {
+            edges.push([i, (i + 1) % contour.length]);
+          }
+
+          const triangles = cdt2d(contour, edges, { exterior: true });
+          const vertices = contour.map(([x, y]) => new THREE.Vector3(x, y, 0));
+
+          const insideTriangles = triangles.filter(triangle =>
+            isTriangleInside(triangle, vertices, contour)
+          );
+          // const insideTriangles = triangles
+          // THIẾT LẬP ĐỘ DÀY
+          const depth = .05 // Điều chỉnh độ dày
+
+          const positions = [];
+          const indices = [];
+          let vertexIndex = 0;
+
+
+
+
+
+          // 1. MẶT TRƯỚC (z = 0)
+          // for (const [a, b, c] of insideTriangles) {
+          //   positions.push(...vertices[a].toArray());
+          //   positions.push(...vertices[b].toArray());
+          //   positions.push(...vertices[c].toArray());
+
+          //   indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
+          //   vertexIndex += 3;
+          // }
+
+          // // 2. MẶT SAU (z = -depth) - ĐẢO CHIỀU
+          for (const [a, b, c] of insideTriangles) {
+            const v1 = [...vertices[a].toArray()];
+            const v2 = [...vertices[b].toArray()];
+            const v3 = [...vertices[c].toArray()];
+
+            v1[2] = -depth;
+            v2[2] = -depth;
+            v3[2] = -depth;
+
+            positions.push(...v1, ...v2, ...v3);
+
+            // Đảo chiều để normal hướng ra ngoài
+            indices.push(vertexIndex + 2, vertexIndex + 1, vertexIndex);
+            vertexIndex += 3;
+          }
+
+          // // // 3. MẶT BÊN (nối 2 mặt)
+          // for (let i = 0; i < contour.length; i++) {
+          //   const current = i;
+          //   const next = (i + 1) % contour.length;
+
+          //   // 4 đỉnh của mặt bên
+          //   const v1 = [contour[current][0], contour[current][1], 0];      // trước-current
+          //   const v2 = [contour[next][0], contour[next][1], 0];           // trước-next
+          //   const v3 = [contour[current][0], contour[current][1], -depth]; // sau-current
+          //   const v4 = [contour[next][0], contour[next][1], -depth];       // sau-next
+
+          //   positions.push(...v1, ...v2, ...v3, ...v4);
+
+          //   // 2 tam giác cho mặt bên
+          //   indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);     // tam giác 1
+          //   indices.push(vertexIndex + 1, vertexIndex + 3, vertexIndex + 2); // tam giác 2
+          //   vertexIndex += 4;
+          // }
+
+          // TẠO GEOMETRY
+          geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+          geo.setIndex(indices);
+          geo.computeVertexNormals();
+
+
+
+
           const iterations = 2
           geo = LoopSubdivision.modify(geo, iterations, {
             split: true,
             uvSmooth: false,
             preserveEdges: true,
-            flatOnly: false,
+            flatOnly: true,
             maxTriangles: Infinity,
           })
-     //inflateLaplacianZ(geo, 0.5,points); // chỉ cần strength
+          //inflateLaplacianZ(geo, 0.5,points); // chỉ cần strength
+          let inflatedGeometry = inflateMesh(geo, contour, .2);
+         
+          inflatedGeometry = LoopSubdivision.modify(inflatedGeometry, 1, {
+            split: true,
+            uvSmooth: false,
+            preserveEdges: true,
+            flatOnly: true,
+            maxTriangles: Infinity,
+          })
+           inflatedGeometry = smoothGeometry(inflatedGeometry, 5, 0.9);
+          const shapesample = new THREE.Shape(points)
+          const matd = new THREE.MeshStandardMaterial({ color: 0x44aa88, wireframe: true, side: THREE.DoubleSide });
+         
+  
+    
 
-   const  shapesample = new THREE.Shape(points)
-          const matd = new THREE.MeshStandardMaterial({ color: 0x44aa88, side: THREE.DoubleSide });
-          const meshs = new THREE.Mesh(new THREE.ShapeGeometry(shapesample), matd);
-         // scene.add(meshs)
+          geo = mergeGeometries([inflatedGeometry, mirrorGeometry(inflatedGeometry, 'z')]);
+
+
           //geo = new THREE.ShapeGeometry(shape2)
         } else {
           geo = new THREE.ShapeGeometry(shape)
@@ -678,7 +965,7 @@ geo.computeVertexNormals();
 
   return { geometry, loading, error, texshape }
 }
-// Component mesh
+
 export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
   const { geometry, loading, error, texshape } = useShapeGeometryFromImage(url, resolution)
   const textureImg = useTexture(urlImg)
@@ -712,13 +999,16 @@ export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
   return (
     <>
       <axesHelper args={[5]} />
+     
       <mesh geometry={geometry} castShadow receiveShadow /* material={mat} */>
-        <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} />
+      <meshBasicMaterial map={textureImg} side={2} wireframe={wireframes}/>
+        {/* <meshNormalMaterial side={2}  wireframe={wireframes} /> */}
+      {/*   <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} /> */}
       </mesh>
 
       <mesh position={[0, 2, 0]}>
         <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial map={generateSDFfromDataTexture(texshape,5)} />
+        <meshBasicMaterial map={generateSDFfromDataTexture(texshape, 5)} />
       </mesh>
     </>
   )

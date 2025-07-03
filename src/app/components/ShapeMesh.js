@@ -79,7 +79,7 @@ float grad = radialGradient(uv); // 0.0 ở tâm -> 1.0 ở rìa
     // pos.z =  displacement * direction;
       float inflateStrength = smoothstep(0.1, 1.0, abs(normal.z));
 
-      pos.z *= .05;
+   
       if(abs(position.z) > .02) {
         //pos.z += mix(0.,(1.0 - grad) * .5 * direction ,clr2.r / 2.);
         //pos.z -= .06 * direction;
@@ -515,7 +515,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
         }
 
        let simplifiedContour = simplifyContour(contour, resolution)
-console.log(simplifiedContour)
+
 simplifiedContour = smoothContour(simplifiedContour, 72)
 
 // Convert to THREE.Vector2 và normalize
@@ -570,6 +570,19 @@ geo = LoopSubdivision.modify(geo, iterations, {
   flatOnly: false,
   maxTriangles: Infinity,
 })
+const posAttr = geo.attributes.position
+const posArray = posAttr.array
+
+for (let i = 0; i < posArray.length; i += 3) {
+  // posArray[i + 0] => x
+  // posArray[i + 1] => y
+  // posArray[i + 2] => z
+
+  posArray[i + 2] *= 0.5 // scale trục Z
+}
+
+// Đừng quên thông báo là vị trí đã thay đổi
+posAttr.needsUpdate = true
 
 // geo = BufferGeometryUtils.mergeVertices(geo);
 

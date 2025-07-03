@@ -72,8 +72,11 @@ vec4 clr2 = texture2D(uAlphaCheck, vUv);
 vec3 sdfMask = clr2.rgb;
 sdfMask = smoothstep(.2,.5,sdfMask);
 // Cách 1: Nhân vào nhưng giữ vùng đen rõ ràng
-vec3 result = mix(baseColor, vec3(0.0), 1.0 - sdfMask.r);
-
+vec3 result = mix(baseColor, vec3(1.0), 1.0 - sdfMask.r);
+result = clr.rgb;
+if(clr.a < 0.01) {
+  result = vec3(1.0);
+}
 gl_FragColor = vec4(result, 1.0);
        //  gl_FragColor = vec4(normalize(vNormal) ,1.);
     }
@@ -413,7 +416,7 @@ function mirrorGeometry(geometry, axis = 'z', depth = 1) {
   pos.needsUpdate = true;
 
   // Lật mặt tam giác
-  console.log(mirrored.index)
+ // console.log(mirrored.index)
   if (mirrored.index) {
     const index = mirrored.index.array;
     for (let i = 0; i < index.length; i += 3) {
@@ -511,6 +514,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
         const imgData = ctx.getImageData(0, 0, img.width, img.height)
 
         // Trace contour path
+        //findContourPath_ConvexHull_sm
         const contour = findContourPath_ConvexHull_sm(imgData.data, img.width, img.height)
 
         if (contour.length < 3) {
@@ -541,8 +545,8 @@ function useShapeGeometryFromImage(url, resolution = 1) {
         }
 
         let simplifiedContour = simplifyContour(contour, resolution)
-
-        simplifiedContour = smoothContour(simplifiedContour, 50)
+        console.log(simplifiedContour)
+       simplifiedContour = smoothContour(simplifiedContour, 40)
 
         // Convert to THREE.Vector2 và normalize
         let points = simplifiedContour.map(p => new THREE.Vector2(
@@ -1043,7 +1047,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
             maxTriangles: Infinity,
           })
           //inflateLaplacianZ(geo, 0.5,points); // chỉ cần strength
-          let inflatedGeometry = inflateMesh(geo, contour, .2);
+          let inflatedGeometry = inflateMesh(geo, contour, .1);
 
 
           const shapesample = new THREE.Shape(points)
@@ -1052,14 +1056,14 @@ function useShapeGeometryFromImage(url, resolution = 1) {
           // let sideGeo = createBridgeGeometry(contour, -DEPTH_CS)
           const DEPTH_CS = .1
           let sideGeo = createBridgeGeometry(contour, -DEPTH_CS);
-          sideGeo = LoopSubdivision.modify(sideGeo, iterations, {
+          sideGeo = LoopSubdivision.modify(sideGeo, 1, {
             split: true,
             uvSmooth: false,
             preserveEdges: true,
             flatOnly: true,
             maxTriangles: Infinity,
           })
-          sideGeo = inflateMesh2(DEPTH_CS, sideGeo, contour, 0.1);
+          sideGeo = inflateMesh2(DEPTH_CS, sideGeo, contour, 0.2);
           sideGeo = smoothGeometry(sideGeo, 5, 0.9);
           let b_shape_geo = mirrorGeometry(inflatedGeometry, 'z', DEPTH_CS)
           flipFaceOrderNonIndexed(b_shape_geo);
@@ -1096,7 +1100,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
         geo.computeVertexNormals()
         geo.computeBoundingBox()
 
-        const texshapes = createShapeMaskTexture(shape, 256);
+        const texshapes = createShapeMaskTexture(shape, 128);
         setTexShape(texshapes)
 
         setGeometry(geo)
@@ -1119,11 +1123,58 @@ function useShapeGeometryFromImage(url, resolution = 1) {
 
   return { geometry, loading, error, texshape }
 }
+function cleanAlphaPixels(texture, threshold = 0.01, fillColor = [1, 1, 1]) {
+  const image = texture.image;
+  if (!image) return;
 
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+
+  canvas.width = image.width;
+  canvas.height = image.height;
+
+  ctx.drawImage(image, 0, 0);
+
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imgData.data;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3] / 255;
+    if (alpha < threshold) {
+      // Gán RGB thành trắng hoặc fillColor
+      data[i] = fillColor[0] * 255;     // R
+      data[i + 1] = fillColor[1] * 255; // G
+      data[i + 2] = fillColor[2] * 255; // B
+       data[i + 3] = 1
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+
+  const newTexture = new THREE.Texture(canvas);
+  newTexture.needsUpdate = true;
+
+  return newTexture;
+}
+function useCleanedTexture(url, threshold = 0.01, fillColor = [1, 1, 1]) {
+  const rawTexture = useTexture(url);
+  const [cleanTexture, setCleanTexture] = useState(null);
+
+  useEffect(() => {
+    if (rawTexture?.image) {
+      const fixed = cleanAlphaPixels(rawTexture, threshold, fillColor);
+      setCleanTexture(fixed);
+    }
+  }, [rawTexture]);
+
+  return cleanTexture || rawTexture;
+}
 export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
-  const { geometry, loading, error, texshape } = useShapeGeometryFromImage(url, resolution)
+  const { geometry, loading, error, texshape } = useShapeGeometryFromImage(url, 1)
  const normalMap = useTexture('fabric.jpg')
-  const textureImg = useTexture(urlImg)
+
+ 
+  const textureImg = useCleanedTexture(urlImg)
   textureImg.encoding = THREE.sRGBEncoding;
   textureImg.colorSpace = THREE.SRGBColorSpace
   const {
@@ -1155,7 +1206,6 @@ export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
 
   });
   useEffect(() => {
-
   }, [texshape])
 
   if (loading) return <mesh><boxGeometry args={[0.1, 0.1, 0.1]} /><meshBasicMaterial color="gray" /></mesh>
@@ -1170,18 +1220,23 @@ export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
     {/*   <meshNormalMaterial/> */}
         <meshStandardMaterial 
           normalMap={normalMap}  
+      /* transparent */
           metalness={0.0}              // không phải kim loại
   roughness={0.6}              // hơi mờ, cảm giác mềm 
   color={'white'} toneMapped={true} map={textureImg} side={2} wireframe={wireframes} />
         {/* <meshNormalMaterial side={2}  wireframe={wireframes} /> */}
-          {/* <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} /> */}
+         {/*  <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} /> */}
       </mesh>
 
       <mesh position={[0, 1.5, 0]}>
         <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial map={generateSDFfromDataTexture(texshape, 5)} />
+        <meshBasicMaterial map={textureImg} transparent/>
       </mesh>
       <mesh position={[1, 1.5, 0]}>
+        <planeGeometry args={[1, 1]} />
+        <meshBasicMaterial map={generateNarrowBandSDFSmooth(texshape)} />
+      </mesh>
+          <mesh position={[0, 2.5, 0]} >
         <planeGeometry args={[1, 1]} />
         <meshBasicMaterial map={texshape} />
       </mesh>

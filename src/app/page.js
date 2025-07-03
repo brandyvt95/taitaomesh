@@ -36,11 +36,11 @@ export default function Home() {
   })
 
   const shapes = [
-    { position: [4, 0, 0], url: '/sa1.png', urlImg: '/s1.jpg' },
-    { position: [2, 0, 0], url: '/sa2.png', urlImg: '/s2.jpg' },
-    { position: [0, 0, 0], url: '/sa3.png', urlImg: '/s3.jpg' },
-    { position: [-2, 0, 0], url: '/sa4.png', urlImg: '/s4.webp' },
-    { position: [-4, 0, 0], url: '/sa5.png', urlImg: '/s5.webp' },
+    { position: [2, 0, 0], url: '/sa1.png', urlImg: '/s1.jpg' },
+  /*   { position: [2, 0, 0], url: '/sa2.png', urlImg: '/s2.jpg' },
+    { position: [0, 0, 0], url: '/sa3.png', urlImg: '/s3.jpg' }, */
+    { position: [0, 0, 0], url: '/sa4.png', urlImg: '/sa4.png' },
+    { position: [-2, 0, 0], url: '/sa5.png', urlImg: '/sa5.png' },
   ];
 
 

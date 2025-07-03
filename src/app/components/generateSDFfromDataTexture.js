@@ -503,7 +503,7 @@ export function generateInwardSDFfromWhiteSurface(binaryTexture, bandWidth = 8) 
 }
 
 
-export function generateNarrowBandSDFSmooth(binaryTexture, bandWidth = 20, falloffCurve = 1.0) {
+export function generateNarrowBandSDFSmooth(binaryTexture, bandWidth = 10, falloffCurve = 1.0) {
 //   const width = binaryTexture.image.width;
 //   const height = binaryTexture.image.height;
 //   const inputData = binaryTexture.image.data;

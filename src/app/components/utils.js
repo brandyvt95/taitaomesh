@@ -123,7 +123,7 @@ export function findContourPath_ConvexHull_sm(imageData, width, height) {
     }
     
     // Smooth bằng moving average
-    return simpleSmooth(points, 1)
+    return subdivisionSmooth(points, 2)
   }
   
   // THÊM: Chaikin's algorithm (proven smooth method)
@@ -168,7 +168,7 @@ export function findContourPath_ConvexHull_sm(imageData, width, height) {
   // const finalContour = addPointsOnEdges(hull, 3)
   
   // Cách 2: Simple smooth (an toàn nhất)
-  const smoothHull = simpleSmooth(hull, 2)
+  const smoothHull = simpleSmooth(hull, 0)
   const finalContour = smoothHull
   
   // Cách 3: Subdivision smooth (tạo nhiều điểm hơn)

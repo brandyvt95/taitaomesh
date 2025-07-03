@@ -53,7 +53,7 @@ export function createShapeMaskTexture(shape, size = 600) {
 
   const texture = new THREE.DataTexture(data, size, size);
   texture.needsUpdate = true;
-  texture.flipY = false;
+  texture.flipY = true;
 
   return texture;
 }

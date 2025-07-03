@@ -1107,7 +1107,8 @@ function useShapeGeometryFromImage(url, resolution = 1) {
 export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
   const { geometry, loading, error, texshape } = useShapeGeometryFromImage(url, resolution)
   const textureImg = useTexture(urlImg)
-
+textureImg.encoding = THREE.sRGBEncoding;
+textureImg.colorSpace = THREE.SRGBColorSpace
   const {
     wireframes
   } = useControls('Model Settings', {
@@ -1136,10 +1137,11 @@ export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
 
   return (
     <>
-      <axesHelper args={[5]} />
+     {/*  <axesHelper args={[5]} /> */}
 
       <mesh geometry={geometry} castShadow receiveShadow /* material={mat} */>
-        <meshPhongMaterial map={textureImg} side={2} wireframe={wireframes} />
+        <meshStandardMaterial   roughness={0.3}
+  metalness={0.0} color={'white'} toneMapped={true} map={textureImg} side={2} wireframe={wireframes} />
         {/* <meshNormalMaterial side={2}  wireframe={wireframes} /> */}
         {/*   <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} /> */}
       </mesh>

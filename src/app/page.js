@@ -36,7 +36,7 @@ export default function Home() {
   })
 
   const shapes = [
-    { position: [4, 0, 0], url: '/shape2.png', urlImg: '/shape.jpg' },
+    /* { position: [4, 0, 0], url: '/shape2.png', urlImg: '/shape.jpg' }, */
     { position: [2, 0, 0], url: '/shape3.png', urlImg: '/shape3o.jpg' },
     { position: [0, 0, 0], url: '/shape2.png', urlImg: '/shape.jpg' },
     { position: [-2, 0, 0], url: '/shape5.png', urlImg: '/shape5o.webp' },
@@ -62,10 +62,11 @@ export default function Home() {
       )}
       <div className="w-full h-screen">
         <Canvas camera={{ position: [0, 0, 3] }} shadows
-         gl={(gl) => {
-    gl.toneMapping = THREE.ACESFilmicToneMapping; // hoặc ReinhardToneMapping
-    gl.outputColorSpace = THREE.SRGBColorSpace;
-    gl.toneMappingExposure = 1.2; // có thể tăng giảm
+         gl={{
+    antialias: false,
+    outputColorSpace: THREE.SRGBColorSpace,
+    toneMapping: THREE.ACESFilmicToneMapping,
+    toneMappingExposure: 1.8,
   }}
         >
           <color attach="background" args={['#1a1a1a']} />
@@ -98,7 +99,7 @@ export default function Home() {
           )}
 
           {/* Lighting */}
-          <ambientLight intensity={1} />
+          <ambientLight intensity={2} />
           <directionalLight
             position={[10, 10, 5]}
             intensity={0.8}
@@ -110,11 +111,11 @@ export default function Home() {
             shadow-camera-bottom={-10}
           />
           <OrbitControls enableDamping dampingFactor={0.05} />
-          {/* Ground plane */}
-          {/*  <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1, 0]} receiveShadow>
+     
+           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1, 0]} receiveShadow>
             <planeGeometry args={[10, 10]} />
             <meshStandardMaterial color="#333" />
-          </mesh> */}
+          </mesh>
         </Canvas>
 
       </div>

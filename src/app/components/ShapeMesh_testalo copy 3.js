@@ -372,25 +372,6 @@ function smoothContour(points, segments = 100, closed = true) {
   // Convert lại về mảng {x, y}
   return smoothPoints.map(p => ({ x: p.x, y: p.y }))
 }
-function flipFaceOrderNonIndexed(geometry) {
-  const pos = geometry.attributes.position;
-  const arr = pos.array;
-
-  for (let i = 0; i < arr.length; i += 9) {
-    // Mỗi 9 phần tử là 1 tam giác: [v1(x,y,z), v2(x,y,z), v3(x,y,z)]
-    // Đảo v1 và v3 để đổi chiều winding order
-
-    for (let j = 0; j < 3; j++) {
-      const tmp = arr[i + j];           // v1
-      arr[i + j] = arr[i + 6 + j];      // v3
-      arr[i + 6 + j] = tmp;
-    }
-  }
-
-  pos.needsUpdate = true;
-  geometry.computeVertexNormals(); // rất quan trọng!
-}
-
 function mirrorGeometry(geometry, axis = 'z', depth = 1) {
   const mirrored = geometry.clone();
   const pos = mirrored.attributes.position;
@@ -413,17 +394,16 @@ function mirrorGeometry(geometry, axis = 'z', depth = 1) {
   pos.needsUpdate = true;
 
   // Lật mặt tam giác
-  console.log(mirrored.index)
   if (mirrored.index) {
     const index = mirrored.index.array;
     for (let i = 0; i < index.length; i += 3) {
       const tmp = index[i];
-      index[i] = index[i + 2];
-      index[i + 2] = tmp;
+      index[i] = index[i + 1];
+      index[i + 1] = tmp;
     }
     mirrored.index.needsUpdate = true;
   }
-    mirrored.computeVertexNormals();
+
   return mirrored;
 }
 function createBridgeGeometry(contour, depth = 1) {
@@ -467,7 +447,128 @@ function createBridgeGeometry(contour, depth = 1) {
 
   return geometry;
 }
+function createInflatedBridgeGeometry(contour, depth = 1, segments = 10) {
+  // Input validation
+  if (!Array.isArray(contour) || !contour.every(p => Array.isArray(p) && p.length === 2 && p.every(n => typeof n === 'number'))) {
+    throw new Error('Contour must be an array of [x, y] number pairs');
+  }
+  if (contour.length < 3) {
+    throw new Error('Contour must have at least 3 points');
+  }
+  if (typeof depth !== 'number' || depth <= 0) {
+    throw new Error('depth must be a positive number');
+  }
+  if (typeof segments !== 'number' || segments < 1) {
+    throw new Error('segments must be at least 1');
+  }
 
+  const positions = [];
+  const indices = [];
+  const len = contour.length;
+
+  // Compute centroid
+  const centroid = new THREE.Vector2(0, 0);
+  contour.forEach(([x, y]) => centroid.add(new THREE.Vector2(x, y)));
+  centroid.divideScalar(len);
+
+  // Calculate distance to contour
+  function distanceToContour(p) {
+    const v = new THREE.Vector2(p[0], p[1]);
+    let minDist = Infinity;
+    for (let i = 0; i < contour.length; i++) {
+      const a = new THREE.Vector2(contour[i][0], contour[i][1]);
+      const b = new THREE.Vector2(contour[(i + 1) % contour.length][0], contour[(i + 1) % contour.length][1]);
+      const ab = b.clone().sub(a);
+      const ap = v.clone().sub(a);
+      const t = THREE.MathUtils.clamp(ap.dot(ab) / ab.lengthSq(), 0, 1);
+      const proj = a.clone().add(ab.multiplyScalar(t));
+      const dist = v.distanceTo(proj);
+      if (dist < minDist) minDist = dist;
+    }
+    return minDist;
+  }
+
+  // Compute max distance to contour
+  let maxDist = 0;
+  const distances = contour.map(p => {
+    const d = distanceToContour(p);
+    if (d > maxDist) maxDist = d;
+    return d;
+  });
+
+  // Generate vertices for each layer
+  for (let s = 0; s <= segments; s++) {
+    const t = s / segments; // [0, 1]
+    const zBase = -depth * t; // From z=0 to z=-depth
+    const inflate = (1 + Math.cos(Math.PI * t)) / 2; // Cosine bulge
+
+    for (let i = 0; i < len; i++) {
+      const [x, y] = contour[i];
+      const dist = new THREE.Vector2(x, y).distanceTo(centroid);
+      const tDist = Math.min(dist / maxDist, 1); // Normalized distance to centroid
+      const zInflate = depth * 0.5 * (1 - tDist * tDist) * inflate; // Parabolic z-inflation
+      positions.push(x, y, zBase + zInflate);
+    }
+  }
+
+  // Generate side faces
+  for (let s = 0; s < segments; s++) {
+    const current = s * len;
+    const next = (s + 1) * len;
+    for (let i = 0; i < len; i++) {
+      const a = current + i;
+      const b = current + (i + 1) % len;
+      const c = next + (i + 1) % len;
+      const d = next + i;
+      indices.push(a, b, d); // First triangle
+      indices.push(b, c, d); // Second triangle
+    }
+  }
+
+  // Create geometry
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+
+  return geometry;
+}
+
+function createBridgeBetweenContours(contourIndices, vertices1, vertices2) {
+  const positions = [];
+  const indices = [];
+
+  for (let i = 0; i < contourIndices.length; i++) {
+    const curr = contourIndices[i];
+    const next = contourIndices[(i + 1) % contourIndices.length];
+
+    const v1a = vertices1[curr]; // điểm trên inflated
+    const v1b = vertices1[next];
+    const v2a = vertices2[curr]; // điểm đối xứng
+    const v2b = vertices2[next];
+
+    const baseIndex = positions.length / 3;
+
+    positions.push(
+      v1a.x, v1a.y, v1a.z, // 0
+      v1b.x, v1b.y, v1b.z, // 1
+      v2a.x, v2a.y, v2a.z, // 2
+      v2b.x, v2b.y, v2b.z  // 3
+    );
+
+    indices.push(
+      baseIndex, baseIndex + 2, baseIndex + 1,
+      baseIndex + 1, baseIndex + 2, baseIndex + 3
+    );
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  return geo;
+}
 
 function useShapeGeometryFromImage(url, resolution = 1) {
   const [geometry, setGeometry] = useState(null)
@@ -511,7 +612,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
         const imgData = ctx.getImageData(0, 0, img.width, img.height)
 
         // Trace contour path
-        const contour = findContourPath_ConvexHull_sm(imgData.data, img.width, img.height)
+        const contour = findContourPath_ConvexHull(imgData.data, img.width, img.height)
 
         if (contour.length < 3) {
           setError('Không tìm thấy contour hợp lệ')
@@ -726,112 +827,6 @@ function useShapeGeometryFromImage(url, resolution = 1) {
 
             return newGeometry;
           }
-          function inflateMesh2(DEPTH_CS, geometry, contour, maxHeight = 5, swellFactor = 0.5, interpolationSteps = 2) {
-            // Input validation
-            if (!(geometry instanceof THREE.BufferGeometry) || !geometry.attributes.position) {
-              throw new Error('Input must be a THREE.BufferGeometry with a position attribute');
-            }
-            if (!Array.isArray(contour) || !contour.every(p => Array.isArray(p) && p.length === 2 && p.every(n => typeof n === 'number'))) {
-              throw new Error('Contour must be an array of [y, z] number pairs');
-            }
-            if (contour.length < 3) {
-              throw new Error('Contour must have at least 3 points to form a valid polygon');
-            }
-
-            const contourPoints = contour.map(([y, z]) => new THREE.Vector2(y, z));
-            const targetZ = -DEPTH_CS / 2; // Mặt phẳng z = -0.5 có độ phồng cao nhất
-            const center = new THREE.Vector3(0, 0, targetZ); // Tâm phồng
-
-            // Extract vertices
-            const positionAttribute = geometry.attributes.position;
-            const vertices = [];
-            for (let i = 0; i < positionAttribute.count; i++) {
-              vertices.push(new THREE.Vector3(
-                positionAttribute.getX(i),
-                positionAttribute.getY(i),
-                positionAttribute.getZ(i)
-              ));
-            }
-
-            // Check if point is on contour (based on y, z)
-            function isOnContour(v, tolerance = 1e-4) {
-              const p = new THREE.Vector2(v.y, v.z);
-              for (let i = 0; i < contourPoints.length; i++) {
-                const a = contourPoints[i];
-                const b = contourPoints[(i + 1) % contourPoints.length];
-                const ab = b.clone().sub(a);
-                const ap = p.clone().sub(a);
-                const t = THREE.MathUtils.clamp(ap.dot(ab) / ab.lengthSq(), 0, 1);
-                const proj = a.clone().add(ab.multiplyScalar(t));
-                if (p.distanceTo(proj) < tolerance) return true;
-              }
-              return false;
-            }
-
-            // Tìm khoảng cách z max từ target z trong mesh
-            let maxZDistance = 0;
-            vertices.forEach(v => {
-              if (!isOnContour(v)) {
-                const zDist = Math.abs(v.z - targetZ);
-                if (zDist > maxZDistance) {
-                  maxZDistance = zDist;
-                }
-              }
-            });
-
-            // Handle case with no interior vertices
-            if (maxZDistance === 0) {
-              console.warn('All vertices on contour or no Z variation; no inflation applied.');
-              return geometry.clone();
-            }
-
-            // Inflate vertices dựa trên khoảng cách đến z = -0.5 và phồng ra từ tâm
-            const newGeometry = geometry.clone();
-            const newPositionAttribute = newGeometry.attributes.position;
-
-            for (let i = 0; i < newPositionAttribute.count; i++) {
-              const vertex = vertices[i];
-
-              if (isOnContour(vertex)) {
-                // Giữ nguyên vertex trên contour
-                continue;
-              } else {
-                const zDistance = Math.abs(vertex.z - targetZ);
-
-                // t = 0 khi ở z = -0.5, t = 1 khi xa z = -0.5 nhất (đảo ngược cho cos)
-                const t = Math.min(zDistance / maxZDistance, 1);
-
-                // Inflation factor theo cos (phồng mạnh nhất khi xa z = -0.5)
-                const cosT = Math.cos(t * Math.PI / 2); // cos(0) = 1, cos(π/2) = 0
-                const inflationFactor = maxHeight * cosT * swellFactor;
-
-                // Tính hướng từ tâm (0,0,targetZ) đến vertex CHỈ TRONG MẶT PHẲNG XY
-                const direction2D = new THREE.Vector2(vertex.x - center.x, vertex.y - center.y);
-
-                // Nếu vertex ở đúng tâm trong mặt phẳng XY, sử dụng hướng mặc định
-                if (direction2D.length() < 1e-6) {
-                  direction2D.set(1, 0); // Hướng mặc định trong XY
-                } else {
-                  direction2D.normalize();
-                }
-
-                const newX = vertex.x + direction2D.x * inflationFactor;
-                const newY = vertex.y + direction2D.y * inflationFactor;
-                const newZ = vertex.z; // Giữ nguyên Z
-
-                newPositionAttribute.setX(i, newX);
-                newPositionAttribute.setY(i, newY);
-                newPositionAttribute.setZ(i, newZ);
-              }
-            }
-
-            newPositionAttribute.needsUpdate = true;
-
-            // Recalculate normals
-            newGeometry.computeVertexNormals();
-
-            return newGeometry;
-          }
 
           function mergeGeometries(geometries) {
             let mergedGeometry = new THREE.BufferGeometry();
@@ -990,21 +985,21 @@ function useShapeGeometryFromImage(url, resolution = 1) {
           // }
 
           // // 2. MẶT SAU (z = -depth) - ĐẢO CHIỀU
-          for (const [a, b, c] of insideTriangles) {
-            const v1 = [...vertices[a].toArray()];
-            const v2 = [...vertices[b].toArray()];
-            const v3 = [...vertices[c].toArray()];
+          // for (const [a, b, c] of insideTriangles) {
+          //   const v1 = [...vertices[a].toArray()];
+          //   const v2 = [...vertices[b].toArray()];
+          //   const v3 = [...vertices[c].toArray()];
 
-            v1[2] = -depth;
-            v2[2] = -depth;
-            v3[2] = -depth;
+          //   v1[2] = -depth;
+          //   v2[2] = -depth;
+          //   v3[2] = -depth;
 
-            positions.push(...v1, ...v2, ...v3);
-            //indices.push(vertexIndex + 2, vertexIndex + 1, vertexIndex);//back
-            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2); //font
+          //   positions.push(...v1, ...v2, ...v3);
 
-            vertexIndex += 3;
-          }
+          //   // Đảo chiều để normal hướng ra ngoài
+          //   indices.push(vertexIndex + 2, vertexIndex + 1, vertexIndex);
+          //   vertexIndex += 3;
+          // }
 
           // // // 3. MẶT BÊN (nối 2 mặt)
           // for (let i = 0; i < contour.length; i++) {
@@ -1049,22 +1044,12 @@ function useShapeGeometryFromImage(url, resolution = 1) {
           const shapesample = new THREE.Shape(points)
           const matd = new THREE.MeshStandardMaterial({ color: 0x44aa88, wireframe: true, side: THREE.DoubleSide });
 
-          // let sideGeo = createBridgeGeometry(contour, -DEPTH_CS)
-          const DEPTH_CS = .1
-          let sideGeo = createBridgeGeometry(contour, -DEPTH_CS);
-          sideGeo = LoopSubdivision.modify(sideGeo, iterations, {
-            split: true,
-            uvSmooth: false,
-            preserveEdges: true,
-            flatOnly: true,
-            maxTriangles: Infinity,
-          })
-          sideGeo = inflateMesh2(DEPTH_CS, sideGeo, contour, 0.1);
-          sideGeo = smoothGeometry(sideGeo, 5, 0.9);
-          let b_shape_geo = mirrorGeometry(inflatedGeometry, 'z', DEPTH_CS)
-          flipFaceOrderNonIndexed(b_shape_geo);
-          geo = mergeGeometries([inflatedGeometry,b_shape_geo , sideGeo]);
-          geo = LoopSubdivision.modify(geo, 1, {
+
+          const DEPTH_CS = .02
+          let sideGeo = createBridgeGeometry(contour, -DEPTH_CS)
+
+          geo = mergeGeometries([inflatedGeometry, mirrorGeometry(inflatedGeometry, 'z', DEPTH_CS), sideGeo]);
+          geo = LoopSubdivision.modify(geo, 2, {
             split: true,
             uvSmooth: false,
             preserveEdges: true,
@@ -1072,7 +1057,6 @@ function useShapeGeometryFromImage(url, resolution = 1) {
             maxTriangles: Infinity,
           })
           geo = smoothGeometry(geo, 5, 0.9);
-            geo.computeVertexNormals();
 
           //geo = new THREE.ShapeGeometry(shape2)
         } else {
@@ -1122,26 +1106,15 @@ function useShapeGeometryFromImage(url, resolution = 1) {
 
 export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
   const { geometry, loading, error, texshape } = useShapeGeometryFromImage(url, resolution)
- const normalMap = useTexture('fabric.jpg')
   const textureImg = useTexture(urlImg)
-  textureImg.encoding = THREE.sRGBEncoding;
-  textureImg.colorSpace = THREE.SRGBColorSpace
+textureImg.encoding = THREE.sRGBEncoding;
+textureImg.colorSpace = THREE.SRGBColorSpace
   const {
     wireframes
   } = useControls('Model Settings', {
     wireframes: { value: false },
   })
 
-  const settinggg = useControls('monitest',
-    {
-      useConvex1: { value: true },
-      useConvex2_nonsmo: { value: false },
-      detectResErr: { value: true },
-      wrapConto: { value: true },
-      en_lapcian_sm: { value: true }
-    }
-
-  )
 
   const shaderRef = useRef()
   const al = useRef()
@@ -1164,17 +1137,13 @@ export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
 
   return (
     <>
-      <axesHelper args={[5]} />
+     {/*  <axesHelper args={[5]} /> */}
 
       <mesh geometry={geometry} castShadow receiveShadow /* material={mat} */>
-    {/*   <meshNormalMaterial/> */}
-        <meshStandardMaterial 
-          normalMap={normalMap}  
-          metalness={0.0}              // không phải kim loại
-  roughness={0.6}              // hơi mờ, cảm giác mềm 
-  color={'white'} toneMapped={true} map={textureImg} side={2} wireframe={wireframes} />
+        <meshStandardMaterial   roughness={0.3}
+  metalness={0.0} color={'white'} toneMapped={true} map={textureImg} side={2} wireframe={wireframes} />
         {/* <meshNormalMaterial side={2}  wireframe={wireframes} /> */}
-          {/* <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} /> */}
+        {/*   <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} /> */}
       </mesh>
 
       <mesh position={[0, 1.5, 0]}>

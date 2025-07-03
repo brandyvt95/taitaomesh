@@ -36,11 +36,11 @@ export default function Home() {
   })
 
   const shapes = [
-    /* { position: [4, 0, 0], url: '/shape2.png', urlImg: '/shape.jpg' }, */
-    { position: [2, 0, 0], url: '/shape3.png', urlImg: '/shape3o.jpg' },
-    { position: [0, 0, 0], url: '/shape2.png', urlImg: '/shape.jpg' },
-    { position: [-2, 0, 0], url: '/shape5.png', urlImg: '/shape5o.webp' },
-    { position: [-4, 0, 0], url: '/shape6.png', urlImg: '/shape6o.webp' },
+    { position: [4, 0, 0], url: '/sa1.png', urlImg: '/s1.jpg' },
+    { position: [2, 0, 0], url: '/sa2.png', urlImg: '/s2.jpg' },
+    { position: [0, 0, 0], url: '/sa3.png', urlImg: '/s3.jpg' },
+    { position: [-2, 0, 0], url: '/sa4.png', urlImg: '/s4.webp' },
+    { position: [-4, 0, 0], url: '/sa5.png', urlImg: '/s5.webp' },
   ];
 
 
@@ -102,7 +102,7 @@ export default function Home() {
           <ambientLight intensity={2} />
           <directionalLight
             position={[10, 10, 5]}
-            intensity={0.8}
+            intensity={2.8}
             castShadow
             shadow-camera-far={50}
             shadow-camera-left={-10}

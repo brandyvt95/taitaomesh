@@ -52,6 +52,8 @@ export function createShapeMaskTexture(shape, size = 600) {
   }
 
   const texture = new THREE.DataTexture(data, size, size);
+  texture.magFilter = THREE.NearestFilter
+  texture.minFilter = THREE.NearestFilter
   texture.needsUpdate = true;
   texture.flipY = true;
 

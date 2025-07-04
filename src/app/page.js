@@ -7,6 +7,7 @@ import { OrbitControls } from '@react-three/drei'
 import ShapeMesh from './components/ShapeMesh';
 import ShapeMesh_testalo from './components/ShapeMesh_testalo';
 import { useControls } from 'leva';
+import { Perf } from 'r3f-perf';
 
 export default function Home() {
   const [image, setImage] = useState(null);
@@ -36,11 +37,16 @@ export default function Home() {
   })
 
   const shapes = [
-    { position: [2, 0, 0], url: '/sa1.png', urlImg: '/s1.jpg' },
-  /*   { position: [2, 0, 0], url: '/sa2.png', urlImg: '/s2.jpg' },
-    { position: [0, 0, 0], url: '/sa3.png', urlImg: '/s3.jpg' }, */
-    { position: [0, 0, 0], url: '/sa4.png', urlImg: '/sa4.png' },
-    { position: [-2, 0, 0], url: '/sa5.png', urlImg: '/sa5.png' },
+ /*    { position: [4, 0, 0], url: '/sa3.png', urlImg: '/s3.jpg' },
+    { position: [2, 0, 0], url: '/sa2.png', urlImg: '/s2.jpg' }, */
+    { position: [0, 0, 0], url: '/sa1.png', urlImg: '/s1.jpg' },
+    { position: [-2, 0, 0], url: '/sa4.png', urlImg: '/sa4.png' },
+    { position: [-4, 0, 0], url: '/sa5.png', urlImg: '/sa5.png' },
+
+      /*   { position: [0, 0, 4], url: '/sa6.png', urlImg: '/sa6.png' },
+    { position: [-2, 0, 4], url: '/sa7.png', urlImg: '/sa7.png' },
+    { position: [-4, 0, 4], url: '/sa8.png', urlImg: '/sa8.png' }, */
+
   ];
 
 
@@ -68,35 +74,13 @@ export default function Home() {
     toneMapping: THREE.ACESFilmicToneMapping,
     toneMappingExposure: 1.8,
   }}
-        >
+        ><Perf/>
           <color attach="background" args={['#1a1a1a']} />
-          {toggle ? (
-            <>
-              {shapes.map((shape, index) => (
+           {shapes.map((shape, index) => (
                 <group key={index} position={shape.position}>
                   <ShapeMesh_testalo url={shape.url} urlImg={shape.urlImg} />
                 </group>
               ))}
-            </>
-          ) : (
-            <>
-              <group position={[0, 0, 0]}>
-                <ShapeMesh url={'/shape2.png'} urlImg={'/shape.jpg'} />
-              </group>
-              <group position={[4, 0, 0]}>
-                <ShapeMesh url={'/shape3.png'} urlImg={'/shape3o.jpg'} />
-              </group>
-              <group position={[-4, 0, 0]}>
-                <ShapeMesh url={'/shape4.png'} urlImg={'/shape4o.jpg'} />
-              </group>
-              <group position={[0, 0, 4]}>
-                <ShapeMesh url={'/shape5.png'} urlImg={'/shape5o.webp'} />
-              </group>
-              <group position={[-4, 0, 4]}>
-                <ShapeMesh url={'/shape6.png'} urlImg={'/shape6o.webp'} />
-              </group>
-            </>
-          )}
 
           {/* Lighting */}
           <ambientLight intensity={2} />

@@ -12,6 +12,9 @@ import { createShapeMaskTexture } from './createShapeMaskTexture'
 import cdt2d from 'cdt2d'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
+
+import concaveman from 'concaveman'
+
 const CustomMaterial = shaderMaterial(
   {
     uTime: 0,
@@ -207,11 +210,203 @@ function findContourPath_ConvexHull(imageData, width, height) {
   }
 
   // Thêm điểm trên cạnh
-  const finalContour = addPointsOnEdges(hull, 3)
+  const finalContour = addPointsOnEdges(hull, 15)
 
   return finalContour
 }
+function fillDeepConcaveAreas(contour, minDepth = 15, lookAhead = 8) {
+  if (contour.length < 3) return contour
+  
+  // Tìm tâm của shape bằng cách tính centroid
+  const centroid = {
+    x: contour.reduce((sum, p) => sum + p.x, 0) / contour.length,
+    y: contour.reduce((sum, p) => sum + p.y, 0) / contour.length
+  }
+  
+  // Phát hiện các vùng lõm sâu với thuật toán chính xác hơn
+  const concaveRegions = []
+  
+  for (let i = 0; i < contour.length; i++) {
+    for (let span = lookAhead; span <= lookAhead * 2; span++) {
+      const start = i
+      const end = (i + span) % contour.length
+      
+      const startPoint = contour[start]
+      const endPoint = contour[end]
+      
+      // Tính vector từ start đến end
+      const chordVector = {
+        x: endPoint.x - startPoint.x,
+        y: endPoint.y - startPoint.y
+      }
+      
+      const chordLength = Math.sqrt(chordVector.x ** 2 + chordVector.y ** 2)
+      if (chordLength < 10) continue // Bỏ qua nếu chord quá ngắn
+      
+      // Tìm điểm lõm sâu nhất
+      let maxDepth = 0
+      let deepestIndex = -1
+      let isInwardConcave = false
+      
+      for (let j = 1; j < span; j++) {
+        const curr = contour[(start + j) % contour.length]
+        
+        // Tính khoảng cách từ điểm hiện tại đến chord (đường thẳng start-end)
+        const t = Math.max(0, Math.min(1, 
+          ((curr.x - startPoint.x) * chordVector.x + (curr.y - startPoint.y) * chordVector.y) / 
+          (chordLength * chordLength)
+        ))
+        
+        const projection = {
+          x: startPoint.x + t * chordVector.x,
+          y: startPoint.y + t * chordVector.y
+        }
+        
+        const distance = Math.sqrt(
+          (curr.x - projection.x) ** 2 + 
+          (curr.y - projection.y) ** 2
+        )
+        
+        if (distance > maxDepth) {
+          maxDepth = distance
+          deepestIndex = (start + j) % contour.length
+          
+          // Kiểm tra hướng lõm: so sánh khoảng cách từ tâm
+          const chordMidpoint = {
+            x: (startPoint.x + endPoint.x) / 2,
+            y: (startPoint.y + endPoint.y) / 2
+          }
+          
+          const distChordToCenter = Math.sqrt(
+            (chordMidpoint.x - centroid.x) ** 2 + 
+            (chordMidpoint.y - centroid.y) ** 2
+          )
+          
+          const distCurrToCenter = Math.sqrt(
+            (curr.x - centroid.x) ** 2 + 
+            (curr.y - centroid.y) ** 2
+          )
+          
+          // Nếu điểm lõm gần tâm hơn chord midpoint = lõm vào trong
+          isInwardConcave = distCurrToCenter < distChordToCenter
+        }
+      }
+      
+      // Chỉ xử lý nếu đủ sâu và lõm vào trong
+      if (maxDepth >= minDepth && isInwardConcave) {
+        // Kiểm tra thêm: tính cross product để xác định hướng
+        const toDeepest = {
+          x: contour[deepestIndex].x - startPoint.x,
+          y: contour[deepestIndex].y - startPoint.y
+        }
+        
+        const crossProduct = chordVector.x * toDeepest.y - chordVector.y * toDeepest.x
+        
+        // Cross product âm = lõm vào bên phải (theo chiều kim đồng hồ)
+        // Điều chỉnh theo hướng contour của bạn
+        const isDefinitelyInward = Math.abs(crossProduct) > chordLength * 2
+        
+        if (isDefinitelyInward) {
+          concaveRegions.push({
+            start: start,
+            end: end,
+            depth: maxDepth,
+            deepestIndex: deepestIndex,
+            span: span
+          })
+        }
+      }
+    }
+  }
+  
+  // Loại bỏ các vùng trùng lặp - ưu tiên vùng sâu nhất
+  const filteredRegions = []
+  concaveRegions.sort((a, b) => b.depth - a.depth)
+  
+  for (const region of concaveRegions) {
+    let overlap = false
+    for (const existing of filteredRegions) {
+      const overlapStart = Math.max(region.start, existing.start)
+      const overlapEnd = Math.min(region.end, existing.end)
+      if (overlapStart < overlapEnd || 
+          Math.abs(region.start - existing.start) < lookAhead / 2) {
+        overlap = true
+        break
+      }
+    }
+    if (!overlap) {
+      filteredRegions.push(region)
+    }
+  }
+  
+  // Tạo contour mới với đường cong cosine mượt
+  const result = []
+  const processedIndices = new Set()
+  
+  // Đánh dấu các vùng sẽ bị thay thế
+  for (const region of filteredRegions) {
+    for (let i = region.start + 1; i < region.end; i++) {
+      processedIndices.add(i % contour.length)
+    }
+  }
+  
+  for (let i = 0; i < contour.length; i++) {
+    if (!processedIndices.has(i)) {
+      result.push(contour[i])
+      
+      // Kiểm tra xem có cần thêm đường cong không
+      const regionStartingHere = filteredRegions.find(r => r.start === i)
+      if (regionStartingHere) {
+        const startPoint = contour[regionStartingHere.start]
+        const endPoint = contour[regionStartingHere.end]
+        
+        // Tạo đường cong cosine mượt
+        const steps = Math.max(5, Math.floor(regionStartingHere.span / 3))
+        
+        for (let step = 1; step < steps; step++) {
+          const t = step / steps
+          
+          // Sử dụng hàm cosine để tạo đường cong mượt
+          const smoothT = 0.5 * (1 - Math.cos(t * Math.PI))
+          
+          // Tính điểm trên đường thẳng
+          const linearX = startPoint.x + smoothT * (endPoint.x - startPoint.x)
+          const linearY = startPoint.y + smoothT * (endPoint.y - startPoint.y)
+          
+          // Thêm một chút lõm vào để không quá thẳng
+          const bulge = Math.sin(t * Math.PI) * regionStartingHere.depth * 0.1
+          const normal = {
+            x: -(endPoint.y - startPoint.y),
+            y: endPoint.x - startPoint.x
+          }
+          const normalLength = Math.sqrt(normal.x ** 2 + normal.y ** 2)
+          
+          if (normalLength > 0) {
+            normal.x /= normalLength
+            normal.y /= normalLength
+            
+            result.push({
+              x: Math.round(linearX + normal.x * bulge),
+              y: Math.round(linearY + normal.y * bulge)
+            })
+          } else {
+            result.push({
+              x: Math.round(linearX),
+              y: Math.round(linearY)
+            })
+          }
+        }
+      }
+    }
+  }
+  
+  return result
+}
 
+// Sử dụng:
+// const smoothedContour = fillDeepConcaveAreas(contour, 15, 8)
+// - minDepth: độ lõm tối thiểu để xử lý (pixel)
+// - lookAhead: khoảng cách nhìn trước để phát hiện vùng lõm
 function findContourPath(imageData, width, height) {
   const isWhite = (x, y) => {
     if (x < 0 || x >= width || y < 0 || y >= height) return false
@@ -363,18 +558,120 @@ function smoothGeometry(geometry, iterations = 1, lambda = 0.5) {
 function smoothContour(points, segments = 100, closed = true) {
   if (points.length < 2) return points
 
+  // Detect dạng dữ liệu
+  const isArrayFormat = Array.isArray(points[0])
+  const toVec = p => isArrayFormat
+    ? new THREE.Vector3(p[0], p[1], 0)
+    : new THREE.Vector3(p.x, p.y, 0)
+
   const curve = new THREE.CatmullRomCurve3(
-    points.map(p => new THREE.Vector3(p.x, p.y, 0)),
+    points.map(toVec),
     closed,
     'catmullrom',
-    0.5 // tension, 0.5 là tiêu chuẩn
+    0.5
   )
 
   const smoothPoints = curve.getPoints(segments)
 
-  // Convert lại về mảng {x, y}
-  return smoothPoints.map(p => ({ x: p.x, y: p.y }))
+  return smoothPoints.map(p =>
+    isArrayFormat ? [p.x, p.y] : { x: p.x, y: p.y }
+  )
 }
+
+function smoothContour2(contour, smoothness = 5, cornerRadius = 8) {
+  if (contour.length < 3) return contour
+  
+  // Bước 1: Loại bỏ các điểm trùng lặp và quá gần nhau
+  const filtered = []
+  for (let i = 0; i < contour.length; i++) {
+    const current = contour[i]
+    const next = contour[(i + 1) % contour.length]
+    const dist = Math.sqrt((next.x - current.x) ** 2 + (next.y - current.y) ** 2)
+    if (dist > 1) {
+      filtered.push(current)
+    }
+  }
+  
+  if (filtered.length < 3) return contour
+  
+  // Bước 2: Phát hiện và làm tròn các góc nhọn
+  const smoothed = []
+  
+  for (let i = 0; i < filtered.length; i++) {
+    const prev = filtered[(i - 1 + filtered.length) % filtered.length]
+    const curr = filtered[i]
+    const next = filtered[(i + 1) % filtered.length]
+    
+    // Tính góc giữa 2 đoạn thẳng
+    const v1 = { x: curr.x - prev.x, y: curr.y - prev.y }
+    const v2 = { x: next.x - curr.x, y: next.y - curr.y }
+    
+    const dot = v1.x * v2.x + v1.y * v2.y
+    const mag1 = Math.sqrt(v1.x ** 2 + v1.y ** 2)
+    const mag2 = Math.sqrt(v2.x ** 2 + v2.y ** 2)
+    
+    if (mag1 === 0 || mag2 === 0) {
+      smoothed.push(curr)
+      continue
+    }
+    
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot / (mag1 * mag2))))
+    
+    // Nếu góc nhọn hơn 120 độ (2.09 rad), làm tròn
+    if (angle < 2.09) {
+      const factor = Math.min(cornerRadius, mag1 * 0.3, mag2 * 0.3)
+      
+      // Tạo điểm bo tròn
+      const p1 = {
+        x: curr.x - (v1.x / mag1) * factor,
+        y: curr.y - (v1.y / mag1) * factor
+      }
+      const p2 = {
+        x: curr.x + (v2.x / mag2) * factor,
+        y: curr.y + (v2.y / mag2) * factor
+      }
+      
+      // Thêm các điểm tạo cung tròn
+      const steps = 3
+      for (let j = 0; j <= steps; j++) {
+        const t = j / steps
+        const x = p1.x * (1 - t) + p2.x * t + 
+                 (curr.x - (p1.x + p2.x) / 2) * Math.sin(t * Math.PI) * 0.5
+        const y = p1.y * (1 - t) + p2.y * t + 
+                 (curr.y - (p1.y + p2.y) / 2) * Math.sin(t * Math.PI) * 0.5
+        smoothed.push({ x: Math.round(x), y: Math.round(y) })
+      }
+    } else {
+      smoothed.push(curr)
+    }
+  }
+  
+  // Bước 3: Áp dụng moving average để làm mượt thêm
+  const result = []
+  for (let i = 0; i < smoothed.length; i++) {
+    let avgX = 0, avgY = 0
+    let count = 0
+    
+    for (let j = -smoothness; j <= smoothness; j++) {
+      const idx = (i + j + smoothed.length) % smoothed.length
+      avgX += smoothed[idx].x
+      avgY += smoothed[idx].y
+      count++
+    }
+    
+    result.push({
+      x: Math.round(avgX / count),
+      y: Math.round(avgY / count)
+    })
+  }
+  
+  return result
+}
+
+// Sử dụng:
+// const smoothPath = smoothContour(contour, 3, 6)
+// - smoothness: độ mượt (1-10), càng cao càng mượt
+// - cornerRadius: bán kính bo góc (pixel), càng lớn góc càng tròn
 function flipFaceOrderNonIndexed(geometry) {
   const pos = geometry.attributes.position;
   const arr = pos.array;
@@ -416,7 +713,7 @@ function mirrorGeometry(geometry, axis = 'z', depth = 1) {
   pos.needsUpdate = true;
 
   // Lật mặt tam giác
- // console.log(mirrored.index)
+  // console.log(mirrored.index)
   if (mirrored.index) {
     const index = mirrored.index.array;
     for (let i = 0; i < index.length; i += 3) {
@@ -426,7 +723,7 @@ function mirrorGeometry(geometry, axis = 'z', depth = 1) {
     }
     mirrored.index.needsUpdate = true;
   }
-    mirrored.computeVertexNormals();
+  mirrored.computeVertexNormals();
   return mirrored;
 }
 function createBridgeGeometry(contour, depth = 1) {
@@ -471,29 +768,239 @@ function createBridgeGeometry(contour, depth = 1) {
   return geometry;
 }
 
+function extractAlphaPointsFromImageData(data, width, height, alphaThreshold = 10) {
+  const points = []
 
-function useShapeGeometryFromImage(url, resolution = 1) {
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = (y * width + x) * 4
+      const alpha = data[index + 3]
+
+      if (alpha > alphaThreshold) {
+        points.push([x, y]) // hoặc { x, y } nếu bạn thích
+      }
+    }
+  }
+
+  return points
+}
+function smoothConcavemanResult(contour, minDepth = 20, smoothFactor = 0.3) {
+  if (contour.length < 3) return contour
+  
+  // Tìm tâm của shape
+  const centroid = {
+    x: contour.reduce((sum, p) => sum + p.x, 0) / contour.length,
+    y: contour.reduce((sum, p) => sum + p.y, 0) / contour.length
+  }
+  
+  // Tính bán kính trung bình từ tâm để có baseline
+  const avgRadius = contour.reduce((sum, p) => {
+    return sum + Math.sqrt((p.x - centroid.x) ** 2 + (p.y - centroid.y) ** 2)
+  }, 0) / contour.length
+  
+  // Phát hiện các vùng lõm sâu
+  const concaveRegions = []
+  
+  for (let i = 0; i < contour.length; i++) {
+    // Thử nhiều khoảng cách khác nhau
+    for (let span = 8; span <= 20; span += 2) {
+      const start = i
+      const end = (i + span) % contour.length
+      
+      const startPoint = contour[start]
+      const endPoint = contour[end]
+      
+      // Tính khoảng cách chord
+      const chordLength = Math.sqrt(
+        (endPoint.x - startPoint.x) ** 2 + 
+        (endPoint.y - startPoint.y) ** 2
+      )
+      
+      if (chordLength < 15) continue // Bỏ qua chord quá ngắn
+      
+      // Tìm điểm lõm sâu nhất trong khoảng này
+      let maxDepth = 0
+      let deepestIndex = -1
+      let isInward = false
+      
+      for (let j = 1; j < span; j++) {
+        const curr = contour[(start + j) % contour.length]
+        
+        // Tính khoảng cách từ điểm hiện tại đến chord
+        const A = endPoint.y - startPoint.y
+        const B = startPoint.x - endPoint.x  
+        const C = endPoint.x * startPoint.y - startPoint.x * endPoint.y
+        const distance = Math.abs(A * curr.x + B * curr.y + C) / 
+                        Math.sqrt(A ** 2 + B ** 2)
+        
+        if (distance > maxDepth) {
+          maxDepth = distance
+          deepestIndex = (start + j) % contour.length
+          
+          // Kiểm tra xem có phải lõm vào trong không
+          const currRadius = Math.sqrt(
+            (curr.x - centroid.x) ** 2 + 
+            (curr.y - centroid.y) ** 2
+          )
+          
+          const chordMidRadius = Math.sqrt(
+            ((startPoint.x + endPoint.x) / 2 - centroid.x) ** 2 + 
+            ((startPoint.y + endPoint.y) / 2 - centroid.y) ** 2
+          )
+          
+          // Nếu điểm lõm gần tâm hơn chord mid và nhỏ hơn bán kính trung bình
+          isInward = currRadius < chordMidRadius && currRadius < avgRadius * 0.85
+        }
+      }
+      
+      // Chỉ xử lý nếu đủ sâu và lõm vào trong
+      if (maxDepth >= minDepth && isInward) {
+        // Kiểm tra thêm bằng cách tính tỷ lệ contour path / chord length
+        let pathLength = 0
+        for (let j = 0; j < span; j++) {
+          const curr = contour[(start + j) % contour.length]
+          const next = contour[(start + j + 1) % contour.length]
+          pathLength += Math.sqrt(
+            (next.x - curr.x) ** 2 + 
+            (next.y - curr.y) ** 2
+          )
+        }
+        
+        const ratio = pathLength / chordLength
+        if (ratio > 1.4) { // Đường path dài hơn chord 40% = lõm
+          concaveRegions.push({
+            start: start,
+            end: end,
+            depth: maxDepth,
+            ratio: ratio,
+            span: span
+          })
+        }
+      }
+    }
+  }
+  
+  // Loại bỏ overlap, ưu tiên vùng sâu nhất
+  const filteredRegions = []
+  concaveRegions.sort((a, b) => b.depth - a.depth)
+  
+  for (const region of concaveRegions) {
+    let hasOverlap = false
+    for (const existing of filteredRegions) {
+      const dist1 = Math.abs(region.start - existing.start)
+      const dist2 = Math.abs(region.end - existing.end)
+      if (dist1 < 8 || dist2 < 8) {
+        hasOverlap = true
+        break
+      }
+    }
+    if (!hasOverlap) {
+      filteredRegions.push(region)
+    }
+  }
+  
+  // Tạo contour mới với đường cong mượt
+  const result = []
+  const skipIndices = new Set()
+  
+  // Đánh dấu các điểm sẽ bị thay thế
+  for (const region of filteredRegions) {
+    for (let i = region.start + 1; i < region.end; i++) {
+      skipIndices.add(i % contour.length)
+    }
+  }
+  
+  for (let i = 0; i < contour.length; i++) {
+    if (!skipIndices.has(i)) {
+      result.push(contour[i])
+      
+      // Kiểm tra xem có region bắt đầu từ điểm này không
+      const region = filteredRegions.find(r => r.start === i)
+      if (region) {
+        const startPoint = contour[region.start]
+        const endPoint = contour[region.end]
+        
+        // Tạo đường cong mượt với cosine interpolation
+        const steps = Math.max(6, Math.floor(region.span / 4))
+        
+        for (let step = 1; step < steps; step++) {
+          const t = step / steps
+          
+          // Cosine interpolation cho smooth transition
+          const smoothT = 0.5 * (1 - Math.cos(t * Math.PI))
+          
+          // Điểm trên đường thẳng
+          const linearX = startPoint.x + smoothT * (endPoint.x - startPoint.x)
+          const linearY = startPoint.y + smoothT * (endPoint.y - startPoint.y)
+          
+          // Thêm bulge nhẹ hướng ra ngoài (không lõm vào)
+          const bulgeAmount = Math.sin(t * Math.PI) * region.depth * smoothFactor
+          
+          // Vector vuông góc với chord, hướng ra ngoài
+          const chordVec = {
+            x: endPoint.x - startPoint.x,
+            y: endPoint.y - startPoint.y
+          }
+          const normal = {
+            x: -chordVec.y,
+            y: chordVec.x
+          }
+          const normalLength = Math.sqrt(normal.x ** 2 + normal.y ** 2)
+          
+          if (normalLength > 0) {
+            normal.x /= normalLength
+            normal.y /= normalLength
+            
+            // Kiểm tra hướng normal (phải hướng ra ngoài)
+            const testPoint = {
+              x: linearX + normal.x * 5,
+              y: linearY + normal.y * 5
+            }
+            const testRadius = Math.sqrt(
+              (testPoint.x - centroid.x) ** 2 + 
+              (testPoint.y - centroid.y) ** 2
+            )
+            const currentRadius = Math.sqrt(
+              (linearX - centroid.x) ** 2 + 
+              (linearY - centroid.y) ** 2
+            )
+            
+            // Nếu test point xa tâm hơn = hướng ra ngoài
+            if (testRadius < currentRadius) {
+              normal.x = -normal.x
+              normal.y = -normal.y
+            }
+            
+            result.push({
+              x: Math.round(linearX + normal.x * bulgeAmount),
+              y: Math.round(linearY + normal.y * bulgeAmount)
+            })
+          } else {
+            result.push({
+              x: Math.round(linearX),
+              y: Math.round(linearY)
+            })
+          }
+        }
+      }
+    }
+  }
+  
+  return result
+}
+
+// Sử dụng:
+// const smoothedContour = smoothConcavemanResult(contour, 20, 0.3)
+// - minDepth: độ lõm tối thiểu để xử lý (pixel)  
+// - smoothFactor: hệ số làm mượt (0.1-0.5, càng cao càng bulge)
+function useShapeGeometryFromImage(url, resolution = 1,params) {
   const [geometry, setGeometry] = useState(null)
   const [loading, setLoading] = useState(false)
   const [texshape, setTexShape] = useState(false)
   const { scene } = useThree()
   const [error, setError] = useState(null)
-  const {
-    extrude,
-    depth,
-    bevelEnabled,
-    bevelSegments,
-    bevelThickness,
-  } = useControls('Extrude Settings', {
-    extrude: { value: 1, min: 0, max: 5, step: 0.1 },
-    depth: { value: 0.1, min: 0, max: 1, step: 0.01 },
-    bevelEnabled: { value: true },
-    bevelSegments: { value: 50, min: 1, max: 50, step: 1 },
-    bevelThickness: { value: 0.3, min: 0, max: 1, step: 0.01 }
-  })
 
-
-
+  console.log(params)
 
   useEffect(() => {
     if (!url) return
@@ -512,11 +1019,14 @@ function useShapeGeometryFromImage(url, resolution = 1) {
         canvas.height = img.height
         ctx.drawImage(img, 0, 0)
         const imgData = ctx.getImageData(0, 0, img.width, img.height)
+  
+      //let  contour = findContourPath(imgData.data, img.width, img.height) 
 
-        // Trace contour path
-        //findContourPath_ConvexHull_sm
-        const contour = findContourPath_ConvexHull_sm(imgData.data, img.width, img.height)
-
+        const pointsss = extractAlphaPointsFromImageData(imgData.data, img.width, img.height, 0.01)
+        let contour= concaveman(pointsss, 5.5,5)
+      contour = contour.map(([x, y]) => ({ x, y }))
+    //  contour = smoothConcavemanResult(contour, 20, 0.3)
+        console.log(contour)
         if (contour.length < 3) {
           setError('Không tìm thấy contour hợp lệ')
           setLoading(false)
@@ -544,10 +1054,11 @@ function useShapeGeometryFromImage(url, resolution = 1) {
           return simplified
         }
 
-        let simplifiedContour = simplifyContour(contour, resolution)
-        console.log(simplifiedContour)
-       simplifiedContour = smoothContour(simplifiedContour, 40)
-
+        //let simplifiedContour = simplifyContour(contour, resolution)
+   
+  let    simplifiedContour = smoothContour(contour,70)
+        // simplifiedContour = smoothContour2(simplifiedContour)
+         console.log('simplifiedContour',40,simplifiedContour)
         // Convert to THREE.Vector2 và normalize
         let points = simplifiedContour.map(p => new THREE.Vector2(
           (p.x / img.width - 0.5) * 2,
@@ -562,7 +1073,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
         if (THREE.ShapeUtils.isClockWise(points)) {
           points.reverse()
         }
-
+        const extrude = 10
         let geo, shape
         if (extrude > 0) {
 
@@ -898,63 +1409,8 @@ function useShapeGeometryFromImage(url, resolution = 1) {
 
             return mergedGeometry;
           }
-          function laplacianSmooth(geometry, iterations = 1, boundaryVertexIndices = []) {
-
-            const positionAttr = geometry.attributes.position;
-            const vertexCount = positionAttr.count;
-
-            // Xây dựng danh sách đỉnh kề
-            const neighbors = Array.from({ length: vertexCount }, () => new Set());
-
-            const indexAttr = geometry.index;
-            for (let i = 0; i < indexAttr.count; i += 3) {
-              const a = indexAttr.getX(i);
-              const b = indexAttr.getX(i + 1);
-              const c = indexAttr.getX(i + 2);
-
-              neighbors[a].add(b); neighbors[a].add(c);
-              neighbors[b].add(a); neighbors[b].add(c);
-              neighbors[c].add(a); neighbors[c].add(b);
-            }
-
-            const positions = positionAttr.array;
-            const isBoundary = new Set(boundaryVertexIndices); // Giữ nguyên các điểm biên
-
-            for (let iter = 0; iter < iterations; iter++) {
-              const newPositions = new Float32Array(positions.length);
-
-              for (let i = 0; i < vertexCount; i++) {
-                if (isBoundary.has(i)) {
-                  // Giữ nguyên vị trí điểm biên
-                  newPositions[i * 3 + 0] = positions[i * 3 + 0];
-                  newPositions[i * 3 + 1] = positions[i * 3 + 1];
-                  newPositions[i * 3 + 2] = positions[i * 3 + 2];
-                  continue;
-                }
-
-                let sumX = 0, sumY = 0, sumZ = 0;
-                neighbors[i].forEach(n => {
-                  sumX += positions[n * 3 + 0];
-                  sumY += positions[n * 3 + 1];
-                  sumZ += positions[n * 3 + 2];
-                });
-
-                const nCount = neighbors[i].size;
-                newPositions[i * 3 + 0] = sumX / nCount;
-                newPositions[i * 3 + 1] = sumY / nCount;
-                newPositions[i * 3 + 2] = sumZ / nCount;
-              }
-
-              // Cập nhật vị trí
-              positionAttr.array.set(newPositions);
-              positionAttr.needsUpdate = true;
-            }
-
-            geometry.computeVertexNormals();
-            return geometry;
-          }
-
-          points = resample(points, 5); // bước 5 đơn vị
+     
+          points = resample(points, 10); // bước 5 đơn vị
 
           shape = new THREE.Shape(points)
           const contour = points.map(p => [p.x, p.y]);
@@ -978,21 +1434,6 @@ function useShapeGeometryFromImage(url, resolution = 1) {
           const positions = [];
           const indices = [];
           let vertexIndex = 0;
-
-
-
-
-
-          // 1. MẶT TRƯỚC (z = 0)
-          // for (const [a, b, c] of insideTriangles) {
-          //   positions.push(...vertices[a].toArray());
-          //   positions.push(...vertices[b].toArray());
-          //   positions.push(...vertices[c].toArray());
-
-          //   indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
-          //   vertexIndex += 3;
-          // }
-
           // // 2. MẶT SAU (z = -depth) - ĐẢO CHIỀU
           for (const [a, b, c] of insideTriangles) {
             const v1 = [...vertices[a].toArray()];
@@ -1009,25 +1450,6 @@ function useShapeGeometryFromImage(url, resolution = 1) {
 
             vertexIndex += 3;
           }
-
-          // // // 3. MẶT BÊN (nối 2 mặt)
-          // for (let i = 0; i < contour.length; i++) {
-          //   const current = i;
-          //   const next = (i + 1) % contour.length;
-
-          //   // 4 đỉnh của mặt bên
-          //   const v1 = [contour[current][0], contour[current][1], 0];      // trước-current
-          //   const v2 = [contour[next][0], contour[next][1], 0];           // trước-next
-          //   const v3 = [contour[current][0], contour[current][1], -depth]; // sau-current
-          //   const v4 = [contour[next][0], contour[next][1], -depth];       // sau-next
-
-          //   positions.push(...v1, ...v2, ...v3, ...v4);
-
-          //   // 2 tam giác cho mặt bên
-          //   indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);     // tam giác 1
-          //   indices.push(vertexIndex + 1, vertexIndex + 3, vertexIndex + 2); // tam giác 2
-          //   vertexIndex += 4;
-          // }
 
           // TẠO GEOMETRY
           geo = new THREE.BufferGeometry();
@@ -1056,7 +1478,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
           // let sideGeo = createBridgeGeometry(contour, -DEPTH_CS)
           const DEPTH_CS = .1
           let sideGeo = createBridgeGeometry(contour, -DEPTH_CS);
-          sideGeo = LoopSubdivision.modify(sideGeo, 1, {
+          sideGeo = LoopSubdivision.modify(sideGeo, 2, {
             split: true,
             uvSmooth: false,
             preserveEdges: true,
@@ -1064,10 +1486,14 @@ function useShapeGeometryFromImage(url, resolution = 1) {
             maxTriangles: Infinity,
           })
           sideGeo = inflateMesh2(DEPTH_CS, sideGeo, contour, 0.2);
-          sideGeo = smoothGeometry(sideGeo, 5, 0.9);
-          let b_shape_geo = mirrorGeometry(inflatedGeometry, 'z', DEPTH_CS)
+          //sideGeo = smoothGeometry(sideGeo, 5, 0.9);
+          let b_shape_geo = mirrorGeometry(inflatedGeometry, 'z', DEPTH_CS + .072)
           flipFaceOrderNonIndexed(b_shape_geo);
-          geo = mergeGeometries([inflatedGeometry,b_shape_geo , sideGeo]);
+          geo = mergeGeometries([
+            inflatedGeometry, 
+            b_shape_geo, 
+            sideGeo
+          ]);
           geo = LoopSubdivision.modify(geo, 1, {
             split: true,
             uvSmooth: false,
@@ -1075,8 +1501,8 @@ function useShapeGeometryFromImage(url, resolution = 1) {
             flatOnly: false,
             maxTriangles: Infinity,
           })
-          geo = smoothGeometry(geo, 5, 0.9);
-            geo.computeVertexNormals();
+         // geo = smoothGeometry(geo, 5, 0.9);
+          geo.computeVertexNormals();
 
           //geo = new THREE.ShapeGeometry(shape2)
         } else {
@@ -1100,7 +1526,7 @@ function useShapeGeometryFromImage(url, resolution = 1) {
         geo.computeVertexNormals()
         geo.computeBoundingBox()
 
-        const texshapes = createShapeMaskTexture(shape, 128);
+        const texshapes = createShapeMaskTexture(shape,  128);
         setTexShape(texshapes)
 
         setGeometry(geo)
@@ -1145,7 +1571,7 @@ function cleanAlphaPixels(texture, threshold = 0.01, fillColor = [1, 1, 1]) {
       data[i] = fillColor[0] * 255;     // R
       data[i + 1] = fillColor[1] * 255; // G
       data[i + 2] = fillColor[2] * 255; // B
-       data[i + 3] = 1
+      data[i + 3] = 1
     }
   }
 
@@ -1170,19 +1596,32 @@ function useCleanedTexture(url, threshold = 0.01, fillColor = [1, 1, 1]) {
   return cleanTexture || rawTexture;
 }
 export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
-  const { geometry, loading, error, texshape } = useShapeGeometryFromImage(url, 1)
- const normalMap = useTexture('fabric.jpg')
 
- 
+  const normalMap = useTexture('fabric.jpg')
+
+
   const textureImg = useCleanedTexture(urlImg)
+  textureImg.generateMipmaps = false;
   textureImg.encoding = THREE.sRGBEncoding;
   textureImg.colorSpace = THREE.SRGBColorSpace
+
+  textureImg.needsUpdate = true;
   const {
     wireframes
   } = useControls('Model Settings', {
     wireframes: { value: false },
   })
+  const {
+    useConvex_1,
+    useConvex_2
+  } = useControls('Extrude Settings', {
+    useConvex_1: { value: true },
+    useConvex_2: { value: false },
+  },    {
+        collapsed: true, // Bắt đầu ở trạng thái thu gọn
+      })
 
+  const { geometry, loading, error, texshape } = useShapeGeometryFromImage(url, 1,{useConvex_1,useConvex_2})
   const settinggg = useControls('monitest',
     {
       useConvex1: { value: true },
@@ -1194,17 +1633,6 @@ export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
 
   )
 
-  const shaderRef = useRef()
-  const al = useRef()
-  const bl = useRef()
-  const cl = useRef()
-  const originalTexture = new THREE.TextureLoader().load(url, (tex) => {
-    al.current = extractAlphaDataTextureWithMipmaps(tex);
-    bl.current = generateSDFfromDataTexture(al.current);
-
-    //cl.current = generateNarrowBandSDFSmooth(texshape);
-
-  });
   useEffect(() => {
   }, [texshape])
 
@@ -1217,28 +1645,32 @@ export default function ShapeMesh_testalo({ url, urlImg, resolution = 1 }) {
       <axesHelper args={[5]} />
 
       <mesh geometry={geometry} castShadow receiveShadow /* material={mat} */>
-    {/*   <meshNormalMaterial/> */}
-        <meshStandardMaterial 
-          normalMap={normalMap}  
-      /* transparent */
+        {/*   <meshNormalMaterial/> */}
+        <meshStandardMaterial
+          normalMap={normalMap}
+          /* transparent */
           metalness={0.0}              // không phải kim loại
-  roughness={0.6}              // hơi mờ, cảm giác mềm 
-  color={'white'} toneMapped={true} map={textureImg} side={2} wireframe={wireframes} />
+          roughness={0.6}              // hơi mờ, cảm giác mềm 
+          color={'white'} toneMapped={true} map={textureImg} side={2} wireframe={wireframes} />
         {/* <meshNormalMaterial side={2}  wireframe={wireframes} /> */}
-         {/*  <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} /> */}
+        {/*  <customMaterial side={2} wireframe={wireframes} ref={shaderRef} uColor={'white'} uAlphaCheck={generateSDFfromDataTexture(texshape)} uAlphaCheck2={cl.current} uMap={textureImg} /> */}
       </mesh>
 
       <mesh position={[0, 1.5, 0]}>
         <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial map={textureImg} transparent/>
+        <meshBasicMaterial side={2}  map={textureImg} transparent />
       </mesh>
       <mesh position={[1, 1.5, 0]}>
         <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial map={generateNarrowBandSDFSmooth(texshape)} />
+        <meshBasicMaterial side={2}  map={textureImg}  />
       </mesh>
-          <mesh position={[0, 2.5, 0]} >
+      <mesh position={[1, 1.5, 0]}>
         <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial map={texshape} />
+        <meshBasicMaterial side={2}  map={generateSDFfromDataTexture(texshape)} />
+      </mesh>
+      <mesh position={[0, 2.5, 0]} >
+        <planeGeometry args={[1, 1]} />
+        <meshBasicMaterial side={2} map={texshape} />
       </mesh>
     </>
   )

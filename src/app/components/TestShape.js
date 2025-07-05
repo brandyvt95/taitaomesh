@@ -1,202 +1,144 @@
-import * as THREE from 'three';
-import concaveman from 'concaveman';
-import { useEffect } from 'react';
-function detectGaps(hullLowRes, threshold = 0.3) {
-  let gapCount = 0;
-  let gapDistances = [];
+import React, { useEffect, useRef, useState } from "react";
+import { useLoader } from "@react-three/fiber";
+import * as THREE from "three";
+import concaveman from "concaveman";
+import { Center, Line, useTexture } from "@react-three/drei";
+function normalizePoints(points) {
+  const xs = points.map(p => p[0]);
+  const ys = points.map(p => p[1]);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
 
-  for (let i = 0; i < hullLowRes.length; i++) {
-    let current = hullLowRes[i];
-    let next = hullLowRes[(i + 1) % hullLowRes.length];
+  const rangeX = maxX - minX || 1;
+  const rangeY = maxY - minY || 1;
+
+  // Scale giữ tỉ lệ đúng
+  const scale = Math.max(rangeX, rangeY);
+
+  return points.map(([x, y]) => {
+    const nx = ((x - minX) / scale) * 2 - (rangeX / scale);
+    const ny = ((y - minY) / scale) * 2 - (rangeY / scale);
+    return new THREE.Vector3(nx, -ny, 0);
+  });
+}
+
+export function TestShape({ url }) {
+  const [highResHull, setHighResHull] = useState([]);
+  const [lowResHull, setLowResHull] = useState([]);
+  const image = useLoader(THREE.TextureLoader, url);
+  const texture = useTexture(url)
+
+  useEffect(() => {
+    const img = new Image();
+    img.crossOrigin = "Anonymous";
+    img.src = url;
+
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+
+      const points = [];
+
+      for (let y = 0; y < canvas.height; y += 2) {
+        for (let x = 0; x < canvas.width; x += 2) {
+          const i = (y * canvas.width + x) * 4;
+          const alpha = data[i + 3];
+          if (alpha > 10) {
+            points.push([x, y]);
+          }
+        }
+      }
+
+      const highHull = concaveman(points, 1); // chi tiết cao
+      const lowHull = concaveman(points, 10); // chi tiết thấp
+
+      setHighResHull(highHull);
+      setLowResHull(lowHull);
+    };
+  }, [url]);
+
+  return (
+    <>
+      <axesHelper args={[1000]} />
+
+        <group >
+
+
+          <RenderPoints posZ={0} size={5} points={lowResHull} color="green" boundImg={{x:500,y:500}}/>
+          <RenderPoints posZ={0} size={1} points={highResHull} color="red" boundImg={{x:500,y:500}}/>
+
+          <RenderLine posZ={0} points={lowResHull} color="blue"  boundImg={{x:500,y:500}}/>
+
+        </group>
     
-    // Calculate distance between two points using x, y coordinates
-    let dx = next[0] - current[0];
-    let dy = next[1] - current[1];
-    let distance = Math.sqrt(dx * dx + dy * dy);
+  
+    
+      <RenderImg url={url} />
+    </>
+  );
+}
+function centerPointsWithImageSize(points, width, height) {
+  const centerX = width / 2;
+  const centerY = height / 2;
 
-    if (distance > threshold) {
-      gapCount++;
-      gapDistances.push(distance);
-    }
-  }
-
-  console.log(`Number of gap regions: ${gapCount}`);
-  console.log(`Gap distances: ${gapDistances.join(', ')}`);
+  return points.map(([x, y]) => new THREE.Vector3(x - centerX, -(y - centerY), 0));
 }
 
-function fillDeepGaps(hullFullRes, hullLowRes, depthThreshold = 0.35) {
-  let filledPoints = [];
-  let maxDepth = 0;
+function RenderImg({ url, posZ = 0 }) {
+  const texture = useTexture(url)
+  return (
+    <group position={[0, 0, posZ]}>
+      <mesh>
+        <planeGeometry args={[texture.source.data.naturalWidth, texture.source.data.naturalHeight]} />
+        <meshBasicMaterial map={texture} transparent alphaTest={0.01}/>
+      </mesh>
+    </group>
 
-  // Tính max depth cho normalization
-  for (let point of hullFullRes) {
-    let minDistance = Infinity;
-    for (let i = 0; i < hullLowRes.length; i++) {
-      let start = hullLowRes[i];
-      let end = hullLowRes[(i + 1) % hullLowRes.length];
-      let dx = end[0] - start[0];
-      let dy = end[1] - start[1];
-      let l2 = dx * dx + dy * dy;
-      if (l2 === 0) continue;
-      let t = Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / l2));
-      let projX = start[0] + t * dx;
-      let projY = start[1] + t * dy;
-      let dist = Math.sqrt((point[0] - projX) ** 2 + (point[1] - projY) ** 2);
-      minDistance = Math.min(minDistance, dist);
-    }
-    maxDepth = Math.max(maxDepth, minDistance);
-  }
-
-  // Xử lý từng điểm trong hullFullRes
-  for (let point of hullFullRes) {
-    let minDistance = Infinity;
-    let bestProjection = null;
-
-    // Tìm projection gần nhất
-    for (let i = 0; i < hullLowRes.length; i++) {
-      let start = hullLowRes[i];
-      let end = hullLowRes[(i + 1) % hullLowRes.length];
-      let dx = end[0] - start[0];
-      let dy = end[1] - start[1];
-      let l2 = dx * dx + dy * dy;
-      if (l2 === 0) continue;
-      let t = Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / l2));
-      let projX = start[0] + t * dx;
-      let projY = start[1] + t * dy;
-      let dist = Math.sqrt((point[0] - projX) ** 2 + (point[1] - projY) ** 2);
-      if (dist < minDistance) {
-        minDistance = dist;
-        bestProjection = { x: projX, y: projY, distance: dist, segmentIndex: i, t: t, dx: dx, dy: dy };
-      }
-    }
-
-    let normalizedDepth = maxDepth > 0 ? minDistance / maxDepth : 0;
-
-    if (normalizedDepth > depthThreshold) {
-      // Vùng sâu, suy ra vị trí trên đường cong
-      let startPoint = hullLowRes[bestProjection.segmentIndex];
-      let endPoint = hullLowRes[(bestProjection.segmentIndex + 1) % hullLowRes.length];
-      let steps = Math.max(5, Math.floor(minDistance / 0.05));
-      let t = Math.min(1, bestProjection.distance / maxDepth); // Tỷ lệ dựa trên độ sâu
-
-      for (let s = 0; s <= 1; s += 1 / steps) {
-        let x = startPoint[0] + s * bestProjection.dx;
-        let y = startPoint[1] + s * bestProjection.dy;
-        // Đường cong parabol dựa trên độ sâu
-        let curveOffset = minDistance * (1 - Math.cos(s * Math.PI)) * (s - s * s);
-        let angle = Math.atan2(bestProjection.dy, bestProjection.dx);
-        let fillX = x + curveOffset * Math.cos(angle + Math.PI / 2);
-        let fillY = y + curveOffset * Math.sin(angle + Math.PI / 2);
-        filledPoints.push([fillX, fillY, point[2] || 0]);
-      }
-    } else {
-      // Vùng không sâu, giữ nguyên điểm từ hullFullRes
-      filledPoints.push([point[0], point[1], point[2] || 0]);
-    }
-  }
-
-  console.log('Filled points count:', filledPoints.length);
-  return filledPoints;
+  );
 }
-function extractAlphaPointsFromImageData(data, width, height, alphaThreshold = 10) {
-  const points = []
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const index = (y * width + x) * 4
-      const alpha = data[index + 3]
+function RenderPoints({ points = [], color, posZ, size,boundImg }) {
+  if (!points || points.length < 2) return null;
+  //const vertices = points.map(([x, y]) => new THREE.Vector3(x, y, 0));
+  //const vertices = normalizePoints(points);
+  const vertices = centerPointsWithImageSize(points,boundImg.x,boundImg.y);
+  const geom = new THREE.BufferGeometry().setFromPoints(vertices);
 
-      if (alpha > alphaThreshold) {
-        points.push([x, y]) // hoặc { x, y } nếu bạn thích
-      }
-    }
-  }
+  return (
+    <group position={[0, 0, posZ]}>
+      <points >
+        <primitive object={geom} attach="geometry" />
+        <pointsMaterial attach="material" color={color} size={size} transparent opacity={1} sizeAttenuation={true}/>
+      </points>
+    </group>
 
-  return points
+  );
 }
 
 
-export function TestShape(id,url,urlImg) {
-    useEffect(() => {
-      if (!url) return
-  
-   
-  
-      const img = new Image()
-      img.crossOrigin = 'anonymous'
-  
-      img.onload = () => { 
+function RenderLine({ points = [], color, closed = true, posZ,boundImg }) {
+  if (!points || points.length < 2) return null;
+ // const vertices = points.map(([x, y]) => new THREE.Vector3(x, y, 0));
+  // const vertices = normalizePoints(points);
+    const vertices = centerPointsWithImageSize(points,boundImg.x,boundImg.y);
+  const finalPoints = closed ? [...vertices, vertices[0]] : vertices;
 
-      }
-      img.onerror = () => { 
+  return (
+    <group position={[0, 0, posZ]}>
+      <Line
+        points={finalPoints}
+        color={color}
+        lineWidth={1}
+      />
+    </group>
 
-      }
-      
-    img.src = url
-  }, [url])
-   const pointsArray = extractAlphaPointsFromImageData(imgData.data, img.width, img.height, 0.01)
-  const points2D = pointsArray.map(p => [p.x, p.y]);
-  const concaveHullLow = concaveman(points2D, 50, 0); // concavity = 1, lengthThreshold = 0
-  const concaveHullHigh = pointsArray;
-  
-  const xs = concaveHullHigh.map(p => p.x);
-  const ys = concaveHullHigh.map(p => p.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  const scale = Math.max(maxX - minX, maxY - minY) / 2 || 1;
-
-  const hullFullRes = concaveHullHigh.map(p => [
-    (p.x - cx) / scale,
-    (p.y - cy) / scale,
-    0
-  ]);
-  const hullLowRes = concaveHullLow.map(p => [
-    p[0],
-    p[1],
-    0
-  ]);
-
-  //detectGaps(hullLowRes)
-  let checkIt = fillDeepGaps(hullFullRes, hullLowRes)
-  console.log(checkIt)
-
-  let smoothSam = hullFullRes;
- 
-const vectors = smoothSam.map(p => new THREE.Vector3(p[0], p[1], p[2]));
-const curve = new THREE.CatmullRomCurve3(vectors, true);
-const smoothPoints = curve.getPoints(150);
-smoothSam = smoothPoints.map(v => [v.x, v.y, v.z]);
-
-console.log(vectors,smoothPoints)
-  const shapeGeometry = new THREE.BufferGeometry();
-  shapeGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(hullLowRes.flat()), 3));
-  const shapeMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 3 });
-  const shapeLine = new THREE.LineLoop(shapeGeometry, shapeMaterial);
-  const pointsGeometry1 = new THREE.BufferGeometry();
-  pointsGeometry1.setAttribute('position', new THREE.BufferAttribute(new Float32Array(hullLowRes.flat()), 3));
-  const pointsGeometry2 = new THREE.BufferGeometry();
-  pointsGeometry2.setAttribute('position', new THREE.BufferAttribute(new Float32Array(hullFullRes.flat()), 3));
-    const pointsGeometry3 = new THREE.BufferGeometry();
-  pointsGeometry3.setAttribute('position', new THREE.BufferAttribute(new Float32Array(checkIt.flat()), 3));
-
-  const points1 = new THREE.Points(pointsGeometry1, new THREE.PointsMaterial({ color: 'white', size: 0.01, sizeAttenuation: true }));
-  const points2 = new THREE.Points(pointsGeometry2, new THREE.PointsMaterial({ color: 'red', size: 5, sizeAttenuation: false }));
-   const points3 = new THREE.Points(pointsGeometry3, new THREE.PointsMaterial({ color: 'blue', size: 8, sizeAttenuation: false }));
-  const group = new THREE.Group();
-  //group.add(shapeLine); 
-  group.add(points1); 
-  group.position.set(params.position[0], params.position[1], params.position[2]);
-  group.rotation.set(Math.PI, 0, 0);
-
-  scene.add(group);
-
-  return {
-    points1,
-    smoothedShape: shapeLine,
-    group,
-    hullFullRes,
-    hullFullRes
-  };
+  );
 }

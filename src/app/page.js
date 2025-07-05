@@ -41,10 +41,10 @@ export default function Home() {
  /*    { position: [4, 0, 0], url: '/sa3.png', urlImg: '/s3.jpg' },
     { position: [2, 0, 0], url: '/sa2.png', urlImg: '/s2.jpg' }, */
    /*  { position: [0, 0, 0], url: '/sa4.png', urlImg: '/sa4.png' }, */
-    /* { position: [-2, 0, 0], url: '/sa4.png', urlImg: '/sa4.png' },*/
+    { position: [-1, 0, 0], url: '/sa4.png', urlImg: '/sa4.png' },
     { position: [0, 0, 0], url: '/sa5.png', urlImg: '/sa5.png' }, 
 
-        { position: [0, 0, 4], url: '/sa6.png', urlImg: '/sa6.png' },
+        { position: [1, 0, 0], url: '/sa6.png', urlImg: '/sa6.png' },
    /*  { position: [-2, 0, 4], url: '/sa7.png', urlImg: '/sa7.png' },
     { position: [-4, 0, 4], url: '/sa8.png', urlImg: '/sa8.png' }, */
 
@@ -68,7 +68,7 @@ export default function Home() {
         </div>
       )}
       <div className="w-full h-screen">
-        <Canvas camera={{ position: [0, 0, 3] }} shadows
+        <Canvas camera={{ position: [0, 0, 500] }} shadows
          gl={{
     antialias: false,
     outputColorSpace: THREE.SRGBColorSpace,
@@ -83,8 +83,8 @@ export default function Home() {
                 </group>
               ))} */}
           {shapes.map((shape, index) => (
-                <group key={index} position={shape.position}>
-                  <TestShape id={index * 2} url={shape.url} urlImg={shape.urlImg} />
+                <group key={index} position={[shape.position[0] * 500,shape.position[1] * 500,shape.position[2] * 500]}>
+                  <TestShape id={index } url={shape.url} urlImg={shape.urlImg} />
                 </group>
               ))}
           <ambientLight intensity={2} />

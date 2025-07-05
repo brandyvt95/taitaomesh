@@ -6,7 +6,7 @@ import * as THREE from 'three';
  * @param {number} maxDist - maximum distance for normalization
  * @returns {THREE.DataTexture} - SDF texture
  */
-export function generateSDFfromDataTexture(binaryTexture, maxDist = 30) {
+export function generateSDFfromDataTexture(binaryTexture, maxDist = 50) {
   const width = binaryTexture.image.width;
   const height = binaryTexture.image.height;
   const inputData = binaryTexture.image.data;

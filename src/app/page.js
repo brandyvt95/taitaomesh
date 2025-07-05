@@ -8,6 +8,7 @@ import ShapeMesh from './components/ShapeMesh';
 import ShapeMesh_testalo from './components/ShapeMesh_testalo';
 import { useControls } from 'leva';
 import { Perf } from 'r3f-perf';
+import { TestShape } from './components/TestShape';
 
 export default function Home() {
   const [image, setImage] = useState(null);
@@ -39,12 +40,12 @@ export default function Home() {
   const shapes = [
  /*    { position: [4, 0, 0], url: '/sa3.png', urlImg: '/s3.jpg' },
     { position: [2, 0, 0], url: '/sa2.png', urlImg: '/s2.jpg' }, */
-    { position: [0, 0, 0], url: '/sa1.png', urlImg: '/s1.jpg' },
-    { position: [-2, 0, 0], url: '/sa4.png', urlImg: '/sa4.png' },
-    { position: [-4, 0, 0], url: '/sa5.png', urlImg: '/sa5.png' },
+   /*  { position: [0, 0, 0], url: '/sa4.png', urlImg: '/sa4.png' }, */
+    /* { position: [-2, 0, 0], url: '/sa4.png', urlImg: '/sa4.png' },*/
+    { position: [0, 0, 0], url: '/sa5.png', urlImg: '/sa5.png' }, 
 
-      /*   { position: [0, 0, 4], url: '/sa6.png', urlImg: '/sa6.png' },
-    { position: [-2, 0, 4], url: '/sa7.png', urlImg: '/sa7.png' },
+        { position: [0, 0, 4], url: '/sa6.png', urlImg: '/sa6.png' },
+   /*  { position: [-2, 0, 4], url: '/sa7.png', urlImg: '/sa7.png' },
     { position: [-4, 0, 4], url: '/sa8.png', urlImg: '/sa8.png' }, */
 
   ];
@@ -76,13 +77,16 @@ export default function Home() {
   }}
         ><Perf/>
           <color attach="background" args={['#1a1a1a']} />
-           {shapes.map((shape, index) => (
+          {/*  {shapes.map((shape, index) => (
                 <group key={index} position={shape.position}>
-                  <ShapeMesh_testalo url={shape.url} urlImg={shape.urlImg} />
+                  <ShapeMesh_testalo id={index * 2} url={shape.url} urlImg={shape.urlImg} />
+                </group>
+              ))} */}
+          {shapes.map((shape, index) => (
+                <group key={index} position={shape.position}>
+                  <TestShape id={index * 2} url={shape.url} urlImg={shape.urlImg} />
                 </group>
               ))}
-
-          {/* Lighting */}
           <ambientLight intensity={2} />
           <directionalLight
             position={[10, 10, 5]}
@@ -96,10 +100,10 @@ export default function Home() {
           />
           <OrbitControls enableDamping dampingFactor={0.05} />
      
-           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1, 0]} receiveShadow>
+         {/*   <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1, 0]} receiveShadow>
             <planeGeometry args={[10, 10]} />
             <meshStandardMaterial color="#333" />
-          </mesh>
+          </mesh> */}
         </Canvas>
 
       </div>
